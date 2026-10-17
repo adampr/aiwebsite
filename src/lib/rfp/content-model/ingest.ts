@@ -69,6 +69,9 @@ export type Requirement = {
   ordinal: number;
   kind: RequirementKind;
   mandatory: boolean;
+  /** The client's own item ID ("OC-01", §5.17.22), when the read grounded
+   *  one. Additive: absent on every requirement without one. */
+  clientRef?: string;
 };
 
 export function flattenStructure(

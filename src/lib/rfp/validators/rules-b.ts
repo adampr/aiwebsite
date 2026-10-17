@@ -346,22 +346,56 @@ export const B7: Rule = {
       }
     }
 
+    // A response-matrix row's rateNote (§5.17.22) is SYSTEM text composed at
+    // lift time from the answer's validated rate-card codes (quote.ts
+    // rateNoteFor), the Alive "XL Secure+: $25 per computer per month"
+    // register. Its figures are the rate card's own: each item's unit price
+    // and any figure the item's note states. Sanctioned ONLY on that field,
+    // so a unit price in prose, a subject or an explanation still blocks
+    // (the leak this rule exists for), and a figure in a rateNote that the
+    // rate card does not state still blocks too.
+    const rateNoteSanctioned = new Set<number>();
+    for (const item of Array.isArray(ctx.rateCard?.items) ? ctx.rateCard.items : []) {
+      if (Number.isFinite(item?.unitPrice?.cents)) rateNoteSanctioned.add(item.unitPrice.cents);
+      for (const m of String(item?.note ?? "").matchAll(/\$\s?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g)) {
+        const dollars = Number(m[1].replace(/,/g, ""));
+        if (Number.isFinite(dollars)) rateNoteSanctioned.add(dollars * 100 + (m[2] ? Number(m[2]) : 0));
+      }
+    }
+    const RATE_NOTE_FIELD = /^rows\[\d+\]\.rateNote$/;
+    const COST_INDEX_NOTE_FIELD = /^costIndex\[\d+\]\.rateNote$/;
+    const MATRIX_ROW_FIELD = /^rows\[\d+\]\.[A-Za-z]+$/;
+
     const violations = [];
     // $1,234 / $1,234.56 / $99
     const money = /\$\s?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g;
 
     for (const span of textSpans(ctx)) {
+      // The questionnaire summary's added-cost index repeats those same row
+      // notes (resolved.ts matrixSummary.costIndex, system furniture).
+      const inRateNote =
+        (!!span.blockId && RATE_NOTE_FIELD.test(span.field)) ||
+        (span.location === "matrix-summary" && COST_INDEX_NOTE_FIELD.test(span.field));
       for (const m of span.text.matchAll(money)) {
         const dollars = Number(m[1].replace(/,/g, ""));
         if (!Number.isFinite(dollars)) continue;
         const cents = dollars * 100 + (m[2] ? Number(m[2]) : 0);
         if (sanctioned.has(cents)) continue;
+        if (inRateNote && rateNoteSanctioned.has(cents)) continue;
         violations.push(
           violation({
             ruleId: "B7",
             severity: "block",
             message: `"${m[0]}" appears in ${span.location} but the pricing engine did not produce it. Every figure a client reads has to come from a computed illustration.`,
-            locator: span.blockId ? { blockId: span.blockId } : {},
+            // A response-matrix row's field rides along (additive, only on
+            // that block kind, so every other B7 locator and its findingSig
+            // stay byte-identical): the recipe needs it to know Tron cannot
+            // reach the row (check-fixes isMatrixRowLocator).
+            locator: span.blockId
+              ? { blockId: span.blockId, ...(MATRIX_ROW_FIELD.test(span.field) ? { field: span.field } : {}) }
+              : span.location === "matrix-summary"
+                ? { field: span.field }
+                : {},
             excerpt: m[0],
             suggestion:
               "Remove the figure, or add the item to the pricing quote so it is computed.",

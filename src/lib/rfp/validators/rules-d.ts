@@ -4,6 +4,16 @@
 
 import { TARGET_BLOCK_HEIGHT_PX, USABLE_CONTENT_HEIGHT_PX } from "@/lib/rfp/content-model";
 import { hasMarkdownTable } from "@/lib/rfp/draft-blocks";
+import {
+  compressRefs,
+  hasMatrixBlock,
+  isMatrixVerdict,
+  matrixRowsIn,
+  questionnaireLabels,
+  refsInClientOrder,
+  rowRefOf,
+  type LocatedMatrixRow,
+} from "./matrix";
 import { documentText, excerptAround, textSpans, violation, type Rule } from "./rule";
 
 /**
@@ -371,4 +381,212 @@ export const D6: Rule = {
   },
 };
 
-export const D_RULES: Rule[] = [D1, D2, D3, D4, D5, D6];
+/* ---- The questionnaire response matrix (§5.17.22, round 34 Q1e) ------------------------------
+ *
+ * A questionnaire-mode section (>= 3 distinct client item IDs among its requirements, matrix.ts
+ * questionnaireLabels) is answered as a matrix the HOST builds from the section's stored answers,
+ * in requirement ordinal order (resolve-draft). What an evaluator does with it (the Alive
+ * reference, pp20-26) is tick their own list: every ID they numbered appears once, in their order,
+ * with a readable verdict. D7, D8 and D9 are those three promises. All three read the resolved
+ * block through matrix.ts, the same reader Coverage uses.
+ *
+ * Scope: D7 and D8 judge only DRAFTED questionnaire-mode sections (an undrafted one is already
+ * uncovered, rule C3). A matrix on a section that is NOT questionnaire-mode (fewer than three refs
+ * after a re-read, say) is not a violation, just unusual: it still prints, so D9 still reads its
+ * rows, but there is no client list to hold it to.
+ */
+
+/** A stored ref or verdict shown in a message: one line, no em dash, capped. Refs the reader
+ *  stored are already sanitized tokens; this only guards a hand-corrupted row. */
+function shown(value: string, cap = 24): string {
+  const one = value.replace(/\s+/g, " ").replace(/—/g, "-").trim();
+  return one.length > cap ? `${one.slice(0, cap)}…` : one;
+}
+
+/** The drafted questionnaire-mode sections with their refs in client order. */
+function questionnaireSections(ctx: Parameters<Rule["check"]>[0]) {
+  const requirements = Array.isArray(ctx.requirements) ? ctx.requirements : [];
+  const sections = Array.isArray(ctx.proposal?.sections) ? ctx.proposal.sections : [];
+  const out: { section: (typeof sections)[number]; order: string[] }[] = [];
+  for (const label of questionnaireLabels(requirements)) {
+    const section = sections.find((s) => s?.structureLabel === label);
+    if (!section || !Array.isArray(section.blocks) || section.blocks.length === 0) continue;
+    out.push({ section, order: refsInClientOrder(requirements, label) });
+  }
+  return out;
+}
+
+/** A row's locator: the block that carries it and the row, at `rows[i]` or a field of it. */
+function rowLocator(sectionId: string, at: LocatedMatrixRow, field?: string) {
+  return {
+    sectionId,
+    ...(at.blockId ? { blockId: at.blockId } : {}),
+    field: field ? `rows[${at.index}].${field}` : `rows[${at.index}]`,
+  };
+}
+
+/**
+ * D7 - Response matrix completeness. WARN.
+ *
+ * Every client item ID on a questionnaire-mode section has EXACTLY ONE matrix row. A missing ID is
+ * the evaluator's checklist with a hole in it (it is also a Coverage gap, matrix.ts
+ * withMatrixCoverage); a second row for one ID is two answers to one question. A row for an ID
+ * that is not one of the section's items answers something the client did not ask there (a stale
+ * matrix after a re-read). One finding per section for the missing IDs (named, runs compressed:
+ * "OC-01 to OC-04"), one per duplicated or foreign ID, located at the offending row.
+ */
+export const D7: Rule = {
+  id: "D7",
+  title: "Response matrix completeness",
+  severity: "warn",
+  check: (ctx) => {
+    const violations = [];
+    for (const { section, order } of questionnaireSections(ctx)) {
+      const rows = matrixRowsIn(section);
+      const seen = new Map<string, number>();
+      const known = new Set(order);
+      for (const at of rows) {
+        const ref = rowRefOf(at.row);
+        if (ref === null) continue; // an ID-less row is D9's block
+        const count = (seen.get(ref) ?? 0) + 1;
+        seen.set(ref, count);
+        if (!known.has(ref)) {
+          if (count === 1)
+            violations.push(
+              violation({
+                ruleId: "D7",
+                severity: "warn",
+                message: `Section ${section.structureLabel} has a response row for ${shown(ref)}, which is not one of this section's client items.`,
+                locator: rowLocator(section.id, at),
+              })
+            );
+          continue;
+        }
+        if (count === 2)
+          violations.push(
+            violation({
+              ruleId: "D7",
+              severity: "warn",
+              message: `Section ${section.structureLabel} answers item ${shown(ref)} in more than one row; each client item needs exactly one.`,
+              locator: rowLocator(section.id, at),
+            })
+          );
+      }
+      const missing = order.filter((ref) => !seen.has(ref));
+      if (missing.length === 0) continue;
+      const list = compressRefs(missing, order);
+      const blockId = rows.find((r) => r.blockId)?.blockId;
+      violations.push(
+        violation({
+          ruleId: "D7",
+          severity: "warn",
+          message: hasMatrixBlock(section)
+            ? `Section ${section.structureLabel} has no response row for ${missing.length} of the client's ${order.length} items: ${list}.`
+            : `Section ${section.structureLabel} has no response matrix, so none of the client's ${order.length} items has a row: ${list}.`,
+          locator: { sectionId: section.id, ...(blockId ? { blockId } : {}) },
+          suggestion:
+            "Redraft the section: its matrix is rebuilt from a fresh draft, one row per client item in the client's order. An item no fact supports cannot be answered by a redraft alone: add the missing knowledge (a fact in the knowledge base) first, then redraft. An item the draft still cannot answer stays listed here and in Coverage.",
+        })
+      );
+    }
+    return violations;
+  },
+};
+
+/**
+ * D8 - Response matrix order. WARN.
+ *
+ * The rows follow requirement ordinal order, which is the client's own order (rule C4). The host
+ * lifts them in that order, so this is a backstop for a drifted or hand-corrupted block. Only rows
+ * for this section's own items count, each at its first appearance (duplicates and foreign IDs are
+ * D7's). One finding per section, naming the first row found out of order.
+ */
+export const D8: Rule = {
+  id: "D8",
+  title: "Response matrix order",
+  severity: "warn",
+  check: (ctx) => {
+    const violations = [];
+    for (const { section, order } of questionnaireSections(ctx)) {
+      const position = new Map(order.map((ref, i) => [ref, i]));
+      const seen = new Set<string>();
+      let maxPos = -1;
+      let maxRef = "";
+      for (const at of matrixRowsIn(section)) {
+        const ref = rowRefOf(at.row);
+        if (ref === null || seen.has(ref)) continue;
+        const pos = position.get(ref);
+        if (pos === undefined) continue;
+        seen.add(ref);
+        if (pos < maxPos) {
+          violations.push(
+            violation({
+              ruleId: "D8",
+              severity: "warn",
+              message: `Section ${section.structureLabel}'s response rows are out of the client's order: ${shown(ref)} comes after ${shown(maxRef)}.`,
+              locator: rowLocator(section.id, at),
+            })
+          );
+          break;
+        }
+        maxPos = pos;
+        maxRef = ref;
+      }
+    }
+    return violations;
+  },
+};
+
+/**
+ * D9 - Response matrix verdicts. BLOCK.
+ *
+ * Every row's verdict is one of yes, partial, no, na, and every row carries an item ID. Anything
+ * else prints as a blank pill or a blank ID, which an evaluator scores as an unanswered item. Read
+ * on EVERY matrix block, questionnaire-mode or not (it prints either way). One finding per row,
+ * located at that row's verdict (or at the row, for one with no ID).
+ */
+export const D9: Rule = {
+  id: "D9",
+  title: "Response matrix verdicts",
+  severity: "block",
+  check: (ctx) => {
+    const violations = [];
+    const sections = Array.isArray(ctx.proposal?.sections) ? ctx.proposal.sections : [];
+    for (const section of sections) {
+      if (!section) continue;
+      for (const at of matrixRowsIn(section)) {
+        const ref = rowRefOf(at.row);
+        if (ref === null) {
+          violations.push(
+            violation({
+              ruleId: "D9",
+              severity: "block",
+              message: `Response row ${at.index + 1} in section ${section.structureLabel} has no item ID, so it would print with a blank ID.`,
+              locator: rowLocator(section.id, at),
+            })
+          );
+          continue;
+        }
+        const verdict = (at.row as { verdict?: unknown }).verdict;
+        if (isMatrixVerdict(verdict)) continue;
+        const stored =
+          typeof verdict === "string" && verdict.trim()
+            ? `"${shown(verdict)}"`
+            : verdict === undefined || verdict === null || verdict === ""
+              ? "none stored"
+              : "not text";
+        violations.push(
+          violation({
+            ruleId: "D9",
+            severity: "block",
+            message: `Response row ${shown(ref)} in section ${section.structureLabel} has no valid answer (${stored}), so it would print as a blank pill. The answer must be yes, partial, no or n/a.`,
+            locator: rowLocator(section.id, at, "verdict"),
+          })
+        );
+      }
+    }
+    return violations;
+  },
+};
+
+export const D_RULES: Rule[] = [D1, D2, D3, D4, D5, D6, D7, D8, D9];

@@ -35,6 +35,7 @@ import {
   type Section,
 } from "./content-model";
 import { runGate, type GateResult } from "./validators/gate";
+import { withMatrixCoverage } from "./validators/matrix";
 import { defaultLetterBody, splitSections } from "./letter";
 import { signatureFor } from "./signature";
 import {
@@ -42,11 +43,20 @@ import {
   coverTitle,
   documentParts,
   letterAddresseeLines,
+  allQuestionnaireRefs,
+  letterRoadmapSentence,
   letterThesis,
+  matrixComplete,
+  matrixFromAnswers,
+  matrixMissingLine,
+  matrixNoLine,
+  matrixSummaryOf,
+  matrixSummaryTiles,
   orderDrafted,
   recipientAddressLines,
+  sheetKicker,
 } from "./furniture";
-import { letterPricingParagraph, partPricingDek } from "./quote";
+import { letterPricingParagraph, partPricingDek, rateNoteFor } from "./quote";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
 import { referenceCardTable, type ReferenceEntry } from "./references-block";
 import type { Reference } from "./content-model/knowledge";
@@ -59,6 +69,12 @@ const blockId = (label: string, i: number) =>
  *  edit above it must not move the locator a gate violation points at. */
 const visualBlockId = (label: string, id: string) =>
   `bv_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${id}`;
+
+/** A section's response matrix (§5.17.22): one per section, so its id is
+ *  the section's alone and never moves when a paragraph or a visual does. */
+const matrixBlockId = (label: string) =>
+  `bm_${label.replace(/[^a-zA-Z0-9]+/g, "_")}`;
+
 
 /** The body of a DraftBlock IS the content-model body (draft-blocks.ts), so
  *  lifting is dropping the storage envelope and adding the BlockBase fields.
@@ -239,6 +255,29 @@ export function resolveDraft(input: DraftGateInput): {
           references.push(referenceFromEntry(entry, references.length + 1));
       return lifted;
     });
+    // A questionnaire section's stored answers (§5.17.22) lift into ONE
+    // response-matrix block closing the section's flow, rows in requirement
+    // ordinal order (the client's, rule C4), rate notes composed here by the
+    // system from the rate card, never by the model. The text is the
+    // drafter's, so the block is "llm" and carries the answers' own cites
+    // (the section's when they name none, so rule A5 still has a join).
+    const matrix = matrixFromAnswers({
+      answers: (sec as { answers?: unknown }).answers,
+      label: sec.label,
+      requirements: input.requirements,
+      rateNote: (codes) => rateNoteFor(codes, input.rateCard),
+    });
+    if (matrix)
+      blocks.push({
+        kind: "response-matrix",
+        id: matrixBlockId(sec.label),
+        sectionId,
+        ordinal: next++,
+        cites: matrix.cites.length ? matrix.cites : sec.cites,
+        generatedBy: "llm",
+        editedByHuman: false,
+        rows: matrix.rows,
+      });
     return {
       id: sectionId,
       proposalId: proposal.id,
@@ -275,6 +314,9 @@ export function resolveDraft(input: DraftGateInput): {
     who: coverWho.trim() || null,
     contactName,
     contactTitle,
+    // The read's grounded-verbatim subject line (rfp_documents.rfp_title,
+    // §5.17.22): "in response to your <rfpTitle>." Brief ledes ignore it.
+    rfpTitle: doc.rfpTitle,
   });
   const address = recipientAddressLines(doc.clientAddress, [
     contactName,
@@ -286,6 +328,41 @@ export function resolveDraft(input: DraftGateInput): {
     input.rateCard.minimumFullyManagedUsers
   );
   const thesis = letterThesis(letterRecord?.thesis);
+
+  // A brief's thematic parts (§5.17.21): ONE resolution (furniture.ts
+  // documentParts over outline.ts resolveParts) that the gate, both emitters
+  // (through buildExportView) and the workspace all read. Null on a real
+  // RFP, which then resolves exactly as before (no `parts` key at all).
+  const docParts = documentParts({
+    intakeForm: doc.intakeForm,
+    structure: input.structure,
+    drafted,
+    partsJson: proposal.partsJson,
+    pricingPresent: input.quote !== null,
+    // The pricing part's dek is system-composed from the same quote and
+    // minimum the letter's pricing paragraph reads (quote.ts).
+    pricingDek: partPricingDek(input.quote, input.rateCard.minimumFullyManagedUsers),
+  });
+
+  // The questionnaire furniture (§5.17.22), from the lifted rows alone: the
+  // summary opening the first matrix section's sheet, and the letter's
+  // system roadmap sentence. Both ABSENT when no section carries a matrix,
+  // so every document from before round 34 resolves exactly as it did.
+  const matrixSections = sections.flatMap((s) =>
+    s.blocks.flatMap((b) =>
+      b.kind === "response-matrix" ? [{ label: s.structureLabel, rows: b.rows }] : []
+    )
+  );
+  // The client's items, answered or not: the summary's total and the
+  // roadmap's "every item" are honest against them, never the rows alone.
+  const clientRefs = allQuestionnaireRefs(input.requirements);
+  const summary = matrixSummaryOf(matrixSections, clientRefs);
+  const roadmap = letterRoadmapSentence({
+    matrixKickers: matrixSections.map((m) => sheetKicker(m.label, docParts)),
+    partsCount: docParts?.parts.length ?? 0,
+    pricing: input.quote !== null,
+    complete: matrixComplete(matrixSections, clientRefs),
+  });
 
   const core = {
     proposal: {
@@ -335,6 +412,7 @@ export function resolveDraft(input: DraftGateInput): {
         : defaultLetterBody(doc.intakeForm),
       ...(address.length ? { address } : {}),
       ...(pricingParagraph ? { pricingParagraph } : {}),
+      ...(roadmap ? { roadmap } : {}),
       // "Regards," is the closing of the standard XL.net signature block
       // (owner's email signature, 2026-08-02); the signature module carries
       // the per-person lines under it.
@@ -374,21 +452,6 @@ export function resolveDraft(input: DraftGateInput): {
   for (const row of input.myKnowledge)
     factsById[`pending_${row.id}`] = pendingFact(row);
 
-  // A brief's thematic parts (§5.17.21): ONE resolution (furniture.ts
-  // documentParts over outline.ts resolveParts) that the gate, both emitters
-  // (through buildExportView) and the workspace all read. Null on a real
-  // RFP, which then resolves exactly as before (no `parts` key at all).
-  const docParts = documentParts({
-    intakeForm: doc.intakeForm,
-    structure: input.structure,
-    drafted,
-    partsJson: proposal.partsJson,
-    pricingPresent: input.quote !== null,
-    // The pricing part's dek is system-composed from the same quote and
-    // minimum the letter's pricing paragraph reads (quote.ts).
-    pricingDek: partPricingDek(input.quote, input.rateCard.minimumFullyManagedUsers),
-  });
-
   const resolved: ResolvedProposal = {
     ...core,
     facts: Object.fromEntries(
@@ -413,6 +476,17 @@ export function resolveDraft(input: DraftGateInput): {
           })),
         }
       : {}),
+    ...(summary
+      ? {
+          matrixSummary: {
+            label: summary.label,
+            tiles: matrixSummaryTiles(summary),
+            noLine: matrixNoLine(summary),
+            missingLine: matrixMissingLine(summary),
+            costIndex: summary.costIndex,
+          },
+        }
+      : {}),
     // Rule C2's own field set, so C2 re-derives and verifies it.
     contentHash: contentHash(core),
   };
@@ -425,6 +499,10 @@ export function resolveDraft(input: DraftGateInput): {
     ordinal: r.ordinal,
     kind: KIND_MAP[r.kind] ?? "factual",
     mandatory: r.mandatory,
+    // The client's item ID (§5.17.22), for rules D7/D8 and the matrix
+    // coverage pass. Absent when none, so a requirement without one is
+    // exactly what it was.
+    ...(r.clientRef ? { clientRef: r.clientRef } : {}),
   }));
 
   // Coverage is derived, not stored: a requirement counts covered when its
@@ -452,7 +530,15 @@ export function resolveDraft(input: DraftGateInput): {
     questions: [],
   };
 
-  return { resolved, requirements, coverage, factsById, knowledge };
+  // A questionnaire section's client-ref requirement with no matrix row
+  // counts uncovered (§5.17.22; validators/matrix.ts, the gate's own reader).
+  return {
+    resolved,
+    requirements,
+    coverage: withMatrixCoverage(coverage, requirements, sections),
+    factsById,
+    knowledge,
+  };
 }
 
 /** Run the full compliance gate against a runtime draft. */

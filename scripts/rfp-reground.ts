@@ -1,6 +1,7 @@
 /**
- * Ground the round-32 letterhead and cover fields of ONE already-read /rfp
- * document again (ARCHITECTURE.md §5.17.20).
+ * Ground the round-32 letterhead and cover fields (and the round-34 subject
+ * line) of ONE already-read /rfp document again (ARCHITECTURE.md §5.17.20,
+ * §5.17.22).
  *
  *   npm run rfp:reground -- <documentId>
  *
@@ -9,9 +10,17 @@
  * before migration 0062 keeps NULL client_address and proposal_headline.
  * This is the lane for those: it re-reads the STORED raw_text through the
  * same reader turn (readRfp, the same grounding and screens) and writes ONLY
- * client_address and proposal_headline, both of them, to NULL when the read
- * refuses one. It never touches status, structure, requirements, titles,
- * the intake form or the contact; claimReread is not used and not changed.
+ * client_address, proposal_headline and (round 34, migration 0064) rfp_title,
+ * each to NULL when the read refuses it. It never touches status, structure,
+ * requirements (so never rfp_requirements.client_ref: a client item ID is
+ * re-grounded only by a re-read that replaces the requirements, "Read it
+ * again" or rfp:reread), titles, the intake form or the contact;
+ * claimReread is not used and not changed.
+ *
+ * rfp_title is the read's grounded-verbatim subject line, the real-RFP cover
+ * lede's "in response to your <rfpTitle>" (§5.17.22); written for every
+ * intake form, exactly as runDocumentRead writes it (a brief's lede never
+ * prints it).
  *
  * The headline is stored only for a document whose STORED intake form is
  * "brief" (a real RFP keeps its composed title), and only when this read
@@ -74,11 +83,14 @@ async function main(): Promise<number> {
       ? (result.proposalHeadline ?? null)
       : null;
 
-  // Only these two columns, and only if nothing rewrote the row while the
+  // Same overwrite rule as runDocumentRead: a read that grounds none is NULL.
+  const rfpTitle = result.rfpTitle ?? null;
+
+  // Only these three columns, and only if nothing rewrote the row while the
   // brain was reading (a re-read, a retitle, an archive bump updatedAt).
   const written = await db
     .update(rfpDocuments)
-    .set({ clientAddress, proposalHeadline })
+    .set({ clientAddress, proposalHeadline, rfpTitle })
     .where(
       and(
         eq(rfpDocuments.id, docId),
@@ -94,6 +106,7 @@ async function main(): Promise<number> {
 
   const addressLines = clientAddress ? clientAddress.split("\n").length : 0;
   const headline = proposalHeadline ? "ok" : "none";
+  const subject = rfpTitle ? "ok" : "none";
   // An operator at the VM, not the document's owner. Shape only.
   await logRfpActivity({
     actorEmail: "cli",
@@ -101,10 +114,10 @@ async function main(): Promise<number> {
     action: "document.reground",
     subjectKind: "document",
     subjectId: docId,
-    meta: { addressLines, headline, form: row.intakeForm, readForm: result.intakeForm, via: "cli" },
+    meta: { addressLines, headline, rfpTitle: subject, form: row.intakeForm, readForm: result.intakeForm, via: "cli" },
   });
   console.log(
-    `reground addressLines=${addressLines} headline=${headline} form=${row.intakeForm} readForm=${result.intakeForm}`
+    `reground addressLines=${addressLines} headline=${headline} rfpTitle=${subject} form=${row.intakeForm} readForm=${result.intakeForm}`
   );
   return 0;
 }
@@ -113,7 +126,7 @@ main()
   .then((code) => process.exit(code))
   .catch((err) => {
     // A fixed message on purpose: a driver error's message can echo the query
-    // params, which here are the address and headline text.
+    // params, which here are the address, headline and subject-line text.
     console.error(
       "rfp:reground failed:",
       err instanceof Error ? err.constructor.name : "unknown error"

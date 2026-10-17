@@ -254,6 +254,12 @@ export const rfpDocuments = pgTable(
      *  only, sanitized and currency/digit-vetoed (brain.ts
      *  screenProposalHeadline). NULL for real RFPs and whenever refused. */
     proposalHeadline: text("proposal_headline"),
+    /** The solicitation's own subject line (round 34): the reader's
+     *  rfpTitle exactly as readRfp returns it (doc-title.ts groundRfpTitle,
+     *  verbatim in the fenced text, injection-screened). Read by the real-RFP
+     *  cover lede. Written at read landing beside proposal_headline, so a
+     *  re-read overwrites it; NULL when none grounded and on pre-round rows. */
+    rfpTitle: text("rfp_title"),
     structureConfirmedAt: timestamp("structure_confirmed_at", {
       withTimezone: true,
     }),
@@ -329,6 +335,14 @@ export const rfpRequirements = pgTable(
     /** "covered" | "gap-acknowledged" | "uncovered" */
     coverageState: text("coverage_state").notNull().default("uncovered"),
     coverageNote: text("coverage_note"),
+    /** The client's own item ID for this requirement ("OC-01"), round 34:
+     *  the reader's echo kept only when that token sits on the SAME line as
+     *  the requirement's text in the fenced source (brain.ts
+     *  groundClientRef), sanitized (outline.ts sanitizeClientRef). NULL when
+     *  none grounded and on pre-round rows. Three or more distinct refs on
+     *  one section make it a questionnaire section (outline.ts
+     *  isQuestionnaireSection), derived on every read, never stored. */
+    clientRef: text("client_ref"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

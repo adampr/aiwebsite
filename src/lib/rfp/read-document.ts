@@ -137,6 +137,9 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         ordinal: i,
         kind: r.kind,
         mandatory: r.mandatory,
+        // Round 34 (migration 0064): the grounded client item ID, or NULL.
+        // Replaced with the requirements, so a re-read refreshes it too.
+        clientRef: r.clientRef ?? null,
       }))
     );
     // An AUTO title becomes "<client> · <subject line>". The CASE compares
@@ -174,6 +177,10 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         // new read refuses goes back to NULL rather than surviving stale.
         clientAddress: result.clientAddress ?? null,
         proposalHeadline: result.proposalHeadline ?? null,
+        // Round 34 (migration 0064): the grounded subject line itself, for
+        // the real-RFP cover lede. Same overwrite rule: a re-read that
+        // grounds none stores NULL.
+        rfpTitle: result.rfpTitle ?? null,
         status: "extracted",
         updatedAt: new Date(),
       })
@@ -210,6 +217,8 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         // was kept. Never the text.
         addressLines: result.clientAddress ? result.clientAddress.split("\n").length : 0,
         headline: result.proposalHeadline ? "ok" : "none",
+        // Round 34, counts only: how many requirements kept a client ID.
+        clientRefs: result.requirements.filter((r) => r.clientRef).length,
       },
     });
   } catch (err) {

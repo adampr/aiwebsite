@@ -25,6 +25,13 @@ import {
   PART_DEK_MAX,
   PART_TITLE_MAX,
   STANDARD_OUTLINE,
+  CLIENT_REF_MAX,
+  QUESTIONNAIRE_MIN_REFS,
+  groundClientRef,
+  isQuestionnaireSection,
+  questionnaireRefs,
+  readSectionAnswers,
+  sanitizeClientRef,
   mayAdoptNarrativeTitle,
   narrativeTitleOpen,
   outlineDefaultTitle,
@@ -720,7 +727,7 @@ check(
   const reground = read("scripts/rfp-reground.ts");
   const regroundSet = reground.slice(reground.indexOf(".set("), reground.indexOf(")", reground.indexOf(".set(")) + 1);
   check(
-    "reground: the same reader turn, writes ONLY client_address + proposal_headline, never claims",
+    "reground: the same reader turn, writes ONLY client_address + proposal_headline + (round 34 F8) rfp_title, never claims, never requirements (client_ref is re-read-only)",
     [
       reground.includes("await readRfp(docId, rawText, row.sourceKind)"),
       regroundSet,
@@ -729,7 +736,7 @@ check(
       reground.includes('process.argv[2]') && reground.includes("isUuid(docId)") && reground.includes("return 2;"),
       JSON.parse(read("package.json")).scripts["rfp:reground"],
     ],
-    [true, ".set({ clientAddress, proposalHeadline })", false, true, true, "tsx scripts/rfp-reground.ts"]
+    [true, ".set({ clientAddress, proposalHeadline, rfpTitle })", false, true, true, "tsx scripts/rfp-reground.ts"]
   );
 
   const route = read("src/app/api/rfp/documents/[id]/generate/route.ts");
@@ -1156,6 +1163,189 @@ check(
   check("cli: package script", JSON.parse(read("package.json")).scripts["rfp:parts"], "tsx scripts/rfp-parts.ts");
   check("activity: proposal.parts is in the closed vocabulary", read("src/lib/rfp/activity.ts").includes('"proposal.parts",'), true);
   check("no em dash in the round-33 sources", ["scripts/rfp-parts.ts", "drizzle/migrations/0063_rfp_proposal_parts.sql", "src/lib/rfp/outline.ts"].map((f) => /[\u2014\u2015]/.test(read(f))), [false, false, false]);
+}
+
+
+// ---- round 34: client refs, the questionnaire predicate, stored answers (§5.17.22) ----------
+{
+  check(
+    "clientRef sanitize: IDs kept, trailing . or : dropped, single letters, spaces, brackets, over-long and non-strings refused",
+    ["OC-01", " OC-01. ", "4.2.1:", "Q12", "1", "AB", "a", "B", "OC 01", "[OC-01]", "-01", "OC-01-ABCDEFGHIJK", "A".repeat(CLIENT_REF_MAX), 7, null].map(sanitizeClientRef),
+    ["OC-01", "OC-01", "4.2.1", "Q12", "1", "AB", null, null, null, null, null, null, "A".repeat(16), null, null]
+  );
+  const SRC = [
+    "Section 1 Ownership, Control and Portability",
+    "OC-01   Who owns what: describe the ownership of tenant and licenses.",
+    "OC-02 Delegated, named access for administration.",
+    "Describe your SLA for P1 issues and response targets in detail.",
+    "OC-03",
+    "Alive can revoke access at any time without help.",
+    "4.2 Describe the onboarding plan and its phases.",
+  ].join("\n");
+  const OC1 = "Who owns what: describe the ownership of tenant and licenses.";
+  check("clientRef: kept when it leads the requirement's words on the same line (whitespace collapsed)", groundClientRef("OC-01", OC1, SRC), "OC-01");
+  check("clientRef: kept when the reader copied the ID into the text too", groundClientRef("OC-01", `OC-01 ${OC1}`, SRC), "OC-01");
+  check("clientRef: kept sanitized (trailing dot)", groundClientRef("OC-02.", "Delegated, named access for administration.", SRC), "OC-02");
+  // F2 (layout c): an ID on a line of its own leads the NEXT line's item, so
+  // this pin flipped from refused to kept; an ID two lines away still binds
+  // nothing, and neither does an ID line followed by some other item.
+  check("clientRef F2: kept when the ID sits alone on the line before the item's words", groundClientRef("OC-03", "Alive can revoke access at any time without help.", SRC), "OC-03");
+  check(
+    "clientRef F2: refused when the ID's own line is followed by a different item, or the item sits two lines below it",
+    [
+      groundClientRef("OC-03", "Describe the onboarding plan and its phases.", SRC),
+      groundClientRef("OC-09", "Describe the exit plan in full.", "OC-09\nSome other heading text here\nDescribe the exit plan in full."),
+    ],
+    [null, null]
+  );
+  check("clientRef: refused when the token is inside the requirement's own words", groundClientRef("P1", "Describe your SLA for P1 issues and response targets in detail.", SRC), null);
+  check("clientRef: refused when invented, or only part of a token", [groundClientRef("OC-09", OC1, SRC), groundClientRef("OC-0", OC1, SRC), groundClientRef("C-01", OC1, SRC)], [null, null, null]);
+  check("clientRef: refused when it is the section label", [groundClientRef("4.2", "Describe the onboarding plan and its phases.", SRC, "4.2"), groundClientRef("4.2", "Describe the onboarding plan and its phases.", SRC, "4.")], [null, "4.2"]);
+  check("clientRef: refused when the requirement is paraphrased (no line carries its words)", groundClientRef("OC-01", "Explain who owns the tenant.", SRC), null);
+  {
+    // F2: the four layouts of the fidelity probe (the docx table a row per
+    // line, a wide pdf column, a NARROW pdf column wrapping the item, the ID
+    // on its own line), with the reader copying each item verbatim.
+    const items: [string, string][] = [
+      ["OC-01", "Describe which systems, accounts, licenses and tools remain owned by Alive and which are provided by the vendor."],
+      ["OC-02", "Confirm that vendor access to Alive's Microsoft 365 tenant uses delegated, named, role-scoped accounts."],
+      ["OC-03", "Confirm that Alive can revoke all vendor access without the vendor's assistance."],
+      ["OC-04", "Describe how the vendor's agents and platforms are removed at offboarding."],
+    ];
+    const wrap = (t: string) => {
+      const lines: string[] = [];
+      let cur = "";
+      for (const w of t.split(" ")) {
+        if ((cur + " " + w).trim().length > 34) {
+          lines.push(cur.trim());
+          cur = w;
+        } else cur += " " + w;
+      }
+      lines.push(cur.trim());
+      return lines;
+    };
+    const layouts: Record<string, string> = {
+      table: ["ID\tRequirement\tResponse", ...items.map(([r, t]) => `${r}\t${t}\t`)].join("\n"),
+      wide: items.map(([r, t]) => `${r}  ${t}`).join("\n"),
+      narrow: items.map(([r, t]) => { const l = wrap(t); return [`${r}   ${l[0]}`, ...l.slice(1).map((x) => `      ${x}`)].join("\n"); }).join("\n"),
+      ownLine: items.map(([r, t]) => `${r}\n${t}`).join("\n"),
+    };
+    check(
+      "clientRef F2: every item keeps its ID in all four layouts (table, wide, narrow-wrapped, own-line IDs)",
+      Object.fromEntries(Object.entries(layouts).map(([k, src]) => [k, items.map(([r, t]) => groundClientRef(r, t, src, "1"))])),
+      Object.fromEntries(Object.keys(layouts).map((k) => [k, items.map(([r]) => r)]))
+    );
+    check(
+      "clientRef F2: curly apostrophes fold to straight on both sides (source curly, reader straight, and the reverse)",
+      [
+        groundClientRef("OC-02", items[1]![1], layouts.wide!.replace(/'/g, "\u2019"), "1"),
+        groundClientRef("OC-02", items[1]![1].replace(/'/g, "\u2019"), layouts.wide!, "1"),
+        groundClientRef("OC-02", items[1]![1].replace(/'/g, "\u2019"), layouts.narrow!.replace(/'/g, "\u2018"), "1"),
+      ],
+      ["OC-02", "OC-02", "OC-02"]
+    );
+    const flat = "OC-01 Describe the systems owned by the client. OC-02 Describe the exit process for the client.";
+    check(
+      "clientRef F2: on a flattened line each item binds to the NEAREST ID before its words (OC-01 for item 2 refused); a bare count in the words never outbids the ID",
+      [
+        groundClientRef("OC-01", "Describe the exit process for the client.", flat, "1"),
+        groundClientRef("OC-02", "Describe the exit process for the client.", flat, "1"),
+        groundClientRef("OC-01", "Describe the systems owned by the client.", flat, "1"),
+        groundClientRef("OC-05", "and describe the two copies you keep.", "OC-05 Provide 2 backups, and describe the two copies you keep.", "1"),
+        groundClientRef("1", "Describe b in full detail.", "1 Describe a in full detail. 2 Describe b in full detail.", "x"),
+      ],
+      [null, "OC-02", "OC-01", "OC-05", null]
+    );
+    check(
+      "clientRef F2: a wrapped line shorter than 12 characters anchors nothing",
+      groundClientRef("OC-07", "Describe the plan for the exit and handover.", "OC-07 Describe\n  the plan for the exit and handover.", "1"),
+      null
+    );
+  }
+  check("clientRef: hostile input never throws", [groundClientRef({}, OC1, SRC), groundClientRef("OC-01", null as never, SRC), groundClientRef("OC-01", OC1, null as never)], [null, null, null]);
+
+  const reqs = [
+    { structureLabel: "1", ordinal: 3, clientRef: "OC-03" },
+    { structureLabel: "1", ordinal: 0, clientRef: "OC-01" },
+    { structureLabel: "1", ordinal: 1, clientRef: "OC-01" },
+    { structureLabel: "1", ordinal: 2, clientRef: "OC-02" },
+    { structureLabel: "1", ordinal: 4, clientRef: null },
+    { structureLabel: "1", ordinal: 5, clientRef: "<b>" },
+    { structureLabel: "2", ordinal: 6, clientRef: "OC-04" },
+    { structureLabel: "2", ordinal: 7, clientRef: "OC-05" },
+  ];
+  check("questionnaire: refs distinct, in ordinal (client) order, hostile values read as none", questionnaireRefs(reqs, "1"), ["OC-01", "OC-02", "OC-03"]);
+  check("questionnaire: >= 3 distinct refs on a section, per section", [QUESTIONNAIRE_MIN_REFS, isQuestionnaireSection(reqs, "1"), isQuestionnaireSection(reqs, "2"), isQuestionnaireSection(reqs, "9")], [3, true, false, false]);
+  check("questionnaire: three requirements sharing ONE ref are not a questionnaire", isQuestionnaireSection([0, 1, 2].map((o) => ({ structureLabel: "1", ordinal: o, clientRef: "OC-01" })), "1"), false);
+  check("questionnaire: pre-0064 rows (no clientRef) and the letter never qualify", [isQuestionnaireSection([{ structureLabel: "1" }, { structureLabel: "1" }, { structureLabel: "1" }], "1"), isQuestionnaireSection(reqs.map((r) => ({ ...r, structureLabel: "__letter" })), "__letter")], [false, false]);
+
+  const good = { ref: "OC-01", verdict: "yes", subject: "Who owns what", explanation: "The client owns its tenant.", cites: ["f1"] };
+  check(
+    "stored answers: the shape round-trips; bad verdicts, refs, over-long text dropped; first ref wins; empty rateCodes absent",
+    readSectionAnswers([
+      { ...good, rateCodes: [] },
+      { ...good, subject: "Second" },
+      { ...good, ref: "OC-02", verdict: "maybe" },
+      { ...good, ref: "OC 03" },
+      { ...good, ref: "OC-04", explanation: "x".repeat(701) },
+      { ...good, ref: "OC-05", verdict: "partial", rateCodes: ["xl-secure-plus"] },
+      null,
+      "x",
+    ]),
+    [good, { ...good, ref: "OC-05", verdict: "partial", rateCodes: ["xl-secure-plus"] }]
+  );
+  check("stored answers: not an array is none", [readSectionAnswers(undefined), readSectionAnswers({})], [[], []]);
+
+  // Storage: migration 0064, the schema, the read landing (source pins).
+  const mig = read("drizzle/migrations/0064_rfp_client_ref_rfp_title.sql");
+  check("0064: header comment first", mig.startsWith("-- "), true);
+  check(
+    "0064: exactly the two columns, IF NOT EXISTS",
+    mig.split("\n").filter((l) => !l.startsWith("--") && l.trim()),
+    [
+      'ALTER TABLE "rfp_documents" ADD COLUMN IF NOT EXISTS "rfp_title" text;--> statement-breakpoint',
+      'ALTER TABLE "rfp_requirements" ADD COLUMN IF NOT EXISTS "client_ref" text;',
+    ]
+  );
+  const journal = JSON.parse(read("drizzle/migrations/meta/_journal.json")) as { entries: { idx: number; tag: string; when: number }[] };
+  const e63 = journal.entries.find((e) => e.tag === "0063_rfp_proposal_parts");
+  const e64 = journal.entries.find((e) => e.tag === "0064_rfp_client_ref_rfp_title");
+  check("journal: 0064 is idx 64 and its `when` is above 0063's", [e64?.idx, !!e63 && !!e64 && e64.when > e63.when], [64, true]);
+  const snap63 = JSON.parse(read("drizzle/migrations/meta/0063_snapshot.json")) as { id: string };
+  const snap64 = JSON.parse(read("drizzle/migrations/meta/0064_snapshot.json")) as { id: string; prevId: string; tables: Record<string, { columns: Record<string, unknown> }> };
+  check("snapshot: 0064.prevId is 0063.id; both columns present", [snap64.prevId === snap63.id, !!snap64.tables["public.rfp_requirements"]?.columns.client_ref, !!snap64.tables["public.rfp_documents"]?.columns.rfp_title], [true, true, true]);
+  const schema = read("src/lib/db/rfp-schema.ts");
+  check("schema: both columns declared", [schema.includes('clientRef: text("client_ref")'), schema.includes('rfpTitle: text("rfp_title")')], [true, true]);
+  const landing = read("src/lib/rfp/read-document.ts");
+  check("read landing: clientRef rides the requirements replace (a re-read refreshes refs with them)", /await replaceRequirements\([\s\S]{0,600}?clientRef: r\.clientRef \?\? null,/.test(landing), true);
+  const update = landing.slice(landing.indexOf(".update(rfpDocuments)", landing.indexOf("await replaceRequirements(")));
+  const upd = update.slice(0, update.indexOf(".where("));
+  check("read landing: rfpTitle lands in the SAME update that stamps extracted, NULL when none", [upd.includes("rfpTitle: result.rfpTitle ?? null"), upd.includes('status: "extracted"')], [true, true]);
+  check("db: replaceRequirements stores clientRef, NULL when absent", read("src/lib/rfp/db.ts").includes("rows.map((r) => ({ ...r, clientRef: r.clientRef ?? null, documentId }))"), true);
+  const brainSrc = read("src/lib/rfp/brain.ts");
+  check("reader: clientRef is grounded against the same text as every other claim, and nulled for a brief", [/clientRef: groundClientRef\(\s*\(r as \{ clientRef\?: unknown \}\)\.clientRef,\s*text,\s*groundable,\s*structureLabel\s*\)/.test(brainSrc), brainSrc.includes('if (read.intakeForm === "brief")\n    read.requirements = read.requirements.map((r) => ({ ...r, clientRef: null }));')], [true, true]);
+
+  // The generate route's landing (source pins).
+  const route = read("src/app/api/rfp/documents/[id]/generate/route.ts");
+  check("route: questionnaire decided by the shared predicate, rate codes from the card in force", [route.includes("if (label && isQuestionnaireSection(reqs, label)) {"), route.includes("const codes = rateNoteCodes(card);")], [true, true]);
+  check("route: the echo source is the document's raw text, for every section", route.includes("echoSource: doc.rawText ?? \"\","), true);
+  check("route: answers land additively in the CAS write, never on the letter", route.includes("...(!isLetter && drafted.answers && drafted.answers.length\n              ? { answers: drafted.answers }\n              : {}),"), true);
+  check("route: meta gains counts only", route.includes("? { answers: drafted.answers?.length ?? 0, refsMissing: drafted.refsMissing }"), true);
+  check("route M4: the section is drafted through the chunked drafter (one call unless the refs exceed one prompt), then landed once", [route.includes("drafted = await draftQuestionnaireChunked("), /drafted = await draftSection\(/.test(route)], [true, false]);
+  const quoteSrc = read("src/lib/rfp/quote.ts");
+  const routeSrc = read("src/app/api/rfp/documents/[id]/generate/route.ts");
+  check(
+    "no em dash in the round-34 sources (quote.ts and the route: the round-34 hunks; both carry older comment dashes)",
+    [
+      read("drizzle/migrations/0064_rfp_client_ref_rfp_title.sql"),
+      read("src/lib/rfp/outline.ts"),
+      read("src/lib/rfp/read-document.ts"),
+      quoteSrc.slice(quoteSrc.indexOf("Questionnaire rate notes"), quoteSrc.indexOf("export type BuiltQuote")),
+      routeSrc.slice(routeSrc.indexOf("// Round 34 (\u00a75.17.22): a section whose items"), routeSrc.indexOf("drafted = await draftQuestionnaireChunked(")),
+    ].map((t) => (t.length === 0 ? "slice missing" : /[\u2014\u2015]/.test(t))),
+    [false, false, false, false, false]
+  );
+  check("client-safety: outline.ts stays import-free with no lookbehind", [/^import /m.test(read("src/lib/rfp/outline.ts")), /\(\?<[=!]/.test(read("src/lib/rfp/outline.ts"))], [false, false]);
 }
 
 if (failures) {

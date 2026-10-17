@@ -132,6 +132,39 @@ export const badgeStripBlockSchema = z.object({
   badges: z.array(z.object({ label: z.string(), note: z.string().optional() })).min(1),
 });
 
+/** Round 34 (§5.17.22). Host-built from stored answers; not in draftedBlockSchema. */
+export const responseMatrixBlockSchema = z.object({
+  ...blockBaseShape,
+  kind: z.literal("response-matrix"),
+  rows: z.array(
+    z.object({
+      ref: z.string(),
+      verdict: z.enum(["yes", "partial", "no", "na"]),
+      subject: z.string(),
+      explanation: z.string(),
+      rateNote: z.string().optional(),
+    }),
+  ),
+});
+
+/** Round 34 (§5.17.22). Model-authored through draft-blocks.ts parsing, not draftedBlockSchema. */
+export const clientEchoBlockSchema = z.object({
+  ...blockBaseShape,
+  kind: z.literal("client-echo"),
+  entries: z
+    .array(
+      z.object({
+        title: z.string().optional(),
+        said: z.string(),
+        saidBy: z.string().optional(),
+        answer: z.string(),
+        willSee: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .max(6),
+});
+
 export const blockSchema = z.discriminatedUnion("kind", [
   proseBlockSchema,
   headingBlockSchema,
@@ -148,6 +181,8 @@ export const blockSchema = z.discriminatedUnion("kind", [
   pageBreakBlockSchema,
   footnoteBlockSchema,
   badgeStripBlockSchema,
+  responseMatrixBlockSchema,
+  clientEchoBlockSchema,
 ]);
 
 /**

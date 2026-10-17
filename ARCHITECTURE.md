@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-16 §5.17.22 ROUND 34: QUESTIONNAIRE RESPONSE MATRIX, CLIENT ECHO, SLA TABLE, REAL-RFP COVER LEDE (owner: "analyze what [Alive Telecom and Meiji] have and do differently and update /rfp so it can get a similar result"). Migration `0064_rfp_client_ref_rfp_title` adds nullable `rfp_requirements.client_ref` (the client's item ID, kept only when it grounds as a token before the requirement's words on one source line, outline.ts `groundClientRef`/`sanitizeClientRef`) and `rfp_documents.rfp_title` (the grounded subject line). A section with >= 3 distinct client refs is a questionnaire section (outline.ts `isQuestionnaireSection`, derived, never stored); its drafter returns `answers` (screened, stored additively on the section record), and resolve-draft lifts them through furniture.ts `matrixFromAnswers` into ONE host-built `response-matrix` block (`bm_<label>`, rows in requirement ordinal order, rate notes SYSTEM-composed by quote.ts `rateNoteFor`) closing the section's flow; the sheet kicker reads "Section 1 · OC-01 to OC-06" (`matrixKicker`); a system summary sheet precedes the first matrix section's sheet with the added-cost index, the summary tiles and the no line (`ResolvedProposal.matrixSummary`, spans under `matrix-summary`). Pills Yes navy / Partial outlined / No ink, Word repeating header + cantSplit rows, PDF row split with "<title> (continued)" and the head row again. New model kind `client-echo` (verbatim `said` grounded as a substring of the fenced source, `saidBy` only when it attributes the quote, numbered circle + "What you told us" + italic quote + answer + "What you will see" callout; Word circles are `public/brand/rfp-ornaments/echo-1..6.png`); the pull-quote ban stands. Gate: D7 (warn, a row per ref), D8 (warn, order), D9 (block, verdict enum); B7 sanctions rate-card figures on `rows[i].rateNote`/`costIndex[i].rateNote` only. Q3: `buildSlaTable`, an origin-"sla" table, visuals op "sla" and the workspace's "SLA table" Add. Q4: a stored rfpTitle reads "Prepared for <client> in response to your <rfpTitle>."; the letter's system roadmap sentence (`letterRoadmapSentence`) prints before the pricing paragraph only when a matrix exists, so every earlier document stays byte-identical (round-33 pins pass). OUT (Adam's call or content): the attachments library and submission zip (the designed next round), the mixed parts layout, the discovery-led intake, onsite/workstation/storage/scan rate rows, the insurance amount, a co-managed fact. Fixtures `r34-questionnaire` and `r34-echo` render at 0 findings. Fix round: echo quotes match on word boundaries ("happy" cut out of "unhappy" drops) and an injection-screened source line becomes a never-matching mark so no quote spans it; `saidBy` must sit on the quote's own line or in a "Name:", "(Name)" or dash attribution beside it; echo entries gain an optional bold `title` sub-head (<= 60, the matrix subject's screen) on all three surfaces, and the prompt allows at most one echo per section, never on boilerplate requirement lists; a real-RFP section's drafter sees a fenced "THE CLIENT'S OWN WORDS FOR THIS SECTION" block (its requirement anchors' source lines plus one line each, <= 2000 chars; byte-absent for briefs, visuals off, questionnaires and no match); the questionnaire prompt carries one line per distinct ref and a questionnaire over 40 refs is drafted in sequential chunks merged first-wins before the one CAS landing (brain.ts `draftQuestionnaireChunked`); a "yes" needs an affirmative non-pricing fact among its OWN cites; `groundClientRef` also accepts wrapped columns, IDs on their own line and curly quotes, and binds a flattened line's item to its nearest ID; the summary is its OWN "How to Read This Response" sheet before the first matrix section, its total counts every client ref (missing included), with an N/A tile when any row is n/a and a no line naming subjects ("No exit dependency (OC-08)"); the roadmap says "every item" only when every ref has a row; the cover lede tidies the rfpTitle (em dash and lookalikes to " · ") and refuses a generic one; a finding on an echo quote is never a Tron instruction; the base-plan codes are not nameable rate notes; `rfp:reground` also writes `rfp_title`; Coverage shows "<label> · <ref>" and "No row".
+
 Last verified against code: 2026-10-16 §5.17.21 ROUND 33: THEMATIC PARTS FOR BRIEF DOCUMENTS (owner, explicitly "make it its own round", overriding the round-8 deferral for brief-mode documents only; reference: the CoWork Curioso proposal's four part dividers with a dek sentence and "SECTION 1.1" / "SECTION 1.1 · CONTINUED" kickers). A brief (intake form "brief", the standard outline) now renders as FOUR thematic parts on the screen sheets, Word and PDF: part 1 sections 1, 2, 3, 7, 10; part 2 sections 4, 5; part 3 sections 6, 9; part 4 section 8 with the Investment sheet opening it (outline.ts `OUTLINE_PARTS`, static, never model-chosen). Only part TITLES and DEKS may be model-authored: migration `0063_rfp_proposal_parts` adds nullable `rfp_proposals.parts_json` (exactly four `{n,title,dek}` entries, title <= 40, dek <= 160, each through brain.ts's round-32 sanitation with digits grounded in that part's OWN drafted text, visuals included; a refused value stores null, never cut), landed by the letter turn in its CAS write (activity meta `partsTitles`/`partsDeks`, counts only) and by the new `npm run rfp:parts -- <proposalId>` (parts only, never the letter; CAS on rev; shape-only activity `proposal.parts`). ONE resolution for every surface: outline.ts `resolveParts`, called through furniture.ts `documentParts` by resolve-draft (new optional `ResolvedProposal.parts`, outside the content hash, scanned by the gate) and by the workspace doc pane (new `partsJson` prop from page.tsx); `ExportView.parts` carries it to both emitters. Sheets print part-relative kickers ("Section 1.4", PDF overflow "SECTION 1.4 · CONTINUED"); labels never change, and the rail, tabs, jump targets, Coverage and Checks are untouched. The kicker rule is now ONE function (furniture.ts `sectionKicker`; export-assets re-exports it, the workspace's secKicker IS it). An empty part has no divider; a part's dek prints only when stored. New ornaments `num-03.png`/`num-04.png`. REAL RFPs are byte-identical (proven against 66a5e8e6 in fresh processes under a frozen clock: docx and PDF bytes, resolved JSON and view all equal; pinned in test:rfpcoverletter). New render fixture documents `r33-parts` and `r33-parts-omit-3`. Fix round: part 3's default title is "Onboarding and Transition"; dividers print the part's DISPLAY position (omit part 3: "03", "Section 3.x"); the pricing part's Investment sheet is its "Section p.1" and its sections count from 2; the pricing part's dek is system-composed (quote.ts `partPricingDek`); part titles run full width and Word part dividers hold title + dek in a fixed-minimum-height cell; stored values are re-screened at read, A-rule phrases and dash lookalikes refused at write, stale deks dropped at render, part findings get a no-Tron recipe. No env change; no new route.
 
 Last verified against code: 2026-10-15 §5.17.20 ROUND 32: COWORK-GRADE DESIGN PARITY (owner put a Claude-CoWork 19-page Curioso proposal beside /rfp output: cover, cover letter, header naming, visuals). Migration `0062_rfp_client_address_headline` adds nullable `rfp_documents.client_address` (<= 5 verbatim-grounded, sanitized postal lines joined "\n", brain.ts `groundAddressLines`) and `proposal_headline` (brief docs only, <= 56 chars, currency- and unstated-digit-vetoed, `screenProposalHeadline`), both written at the read landing (Read it again and `rfp:reread` reach only a claimable document; the new `npm run rfp:reground -- <documentId>` regrounds both on an already-read one). Brief docs adopt the drafter's narrative section `title` only over an untouched standard outline title (outline.ts `mayAdoptNarrativeTitle`, never "10" About XL.net or the letter; record and structure in one transaction, `db.ts completeGenerationRetitled`; activity meta `retitled: true`). The letter turn is rewritten toward the reference shape (client context first, rule 3 verbatim) and returns an optional `thesis` stored on the letter record (no migration). Model visuals gain `timeline` (2..6 steps, kicker <= 24 into the step label) and `ledger` (2..12 rows, stored as the existing fact-grid); cards widen to 2..3. Rendering, ONE spec for the screen sheet, Word and PDF, authored once in the new pure client-safe `src/lib/rfp/furniture.ts`: a brief's cover prints its stored headline, the cover lede gains ", Attention: <name>, <title>" when a contact is stored (client still semibold), the letterhead prints the stored postal lines under the addressee, a SYSTEM pricing paragraph (quote.ts `letterPricingParagraph`, from the stored quote only, no term) sits before the last drafted paragraph (after the body when there is only one; `ResolvedLetter.address` / `.pricingParagraph`, both optional and scanned by the gate), and the navy closing prints the letter's thesis (`backCover.subhead`) over the flat-fee fallback. The submitted-by columns and the "Confidential" pagefoot already existed on all three surfaces; Confidential is recorded as standing business copy, not a draft mark. Parity fixes: three-up cards on screen (`--rfpdoc-n`, globals.css), Word fact-grid keepNext, Word addressee spacing, and two PDF timeline defects (double-advanced row height; bodies aligned under the tallest title). Out of scope by record: thematic numbered parts (round-8 ruling, rule C4), 6-up cards. New `npm run test:rfpcoverletter`; `rfp:render-fixture` also renders the round-32 brief. No env change; no new route.
@@ -9986,6 +9988,10 @@ cells, exactly 2 cards, 700-char callout body, currency dropped);
 `reanchorBlocks` clamps `after` on every paragraph-changing write;
 `tableColumnFractions` is the shared column arithmetic. Pull-quotes are cut:
 no testimonial fact exists and a named person's words are never invented.
+The one exception is §5.17.22's `client-echo` block, which prints only the
+CLIENT's own words, verbatim from its fenced source (word-bounded substring
+grounding, never paraphrased), inside quote chrome; it is no testimonial and
+quotes no one else.
 
 **Grounding: numbers in visuals are never model inventions.** The drafter
 prompt (`draftSection`) gains a VISUALS stanza, byte-absent when
@@ -12768,6 +12774,367 @@ screen's A-rule check matches findings by field alone, so span rules
 without a charOffset screen too. A B7 finding on a part dek carries no field locator (B7 locates
 by block only), so it would get the whole-document Tron recipe; the system
 pricing dek is the only dek that carries money and B7 sanctions it.
+
+#### 5.17.22 Questionnaire response matrix, client echo, SLA table, real-RFP cover lede (round 34, 2026-10-16)
+
+The owner asked to "analyze what [Alive Telecom and Meiji] have and do
+differently and update /rfp so it can get a similar result." References: the
+Alive Telecom proposal (its vendor due diligence questionnaire answered item
+by item, pp20-40: per client section a table of ID, a Yes / Partial / No pill
+and a bold-subject explanation, "SECTION 1 · OC-01 TO OC-04" kickers, "(continued)"
+sheets, a "How to Read This Response" opener with summary tiles and an
+"Items that involve added cost or a third party" index; and its pain-point
+pages, pp4-6: a numbered circle, "WHAT YOU TOLD US" with the client's line in
+italics, the answer, a tinted "WHAT YOU WILL SEE" callout) and the Meiji
+proposal (pp4, 8: the client's words beside what changes).
+
+**The hard controls do not move.** The model never writes a price: a figure in
+a matrix row is the SYSTEM's, rendered from the rate card. Every other figure
+grounds on cited facts. Client text stays fenced and reaches the document only
+as a verbatim quote. A real RFP keeps its structure and order (rule C4). One
+spec for the screen, Word and the PDF. No em dashes.
+
+**Migration `0064_rfp_client_ref_rfp_title`** (conventions as 0063, journal entry after 0063's) adds two
+nullable columns: `rfp_requirements.client_ref` (the client's own item ID,
+"OC-01") and `rfp_documents.rfp_title` (the read's grounded subject line, the
+doc-title.ts `groundRfpTitle` result that until now only fed the composed
+document title). A re-read overwrites both; pre-round rows read NULL.
+`npm run rfp:reground -- <documentId>` re-grounds `rfp_title` on an
+already-read document (the same reader result it writes the address and
+headline from), but NOT `client_ref`: a client item ID is re-grounded only by
+a read that replaces the requirements ("Read it again" or `rfp:reread`).
+
+**The client's item IDs (reader).** Each extracted requirement may carry
+`clientRef`, kept ONLY when the source ties the model's echoed ref to that
+requirement (outline.ts `groundClientRef`, the round-32 verbatim discipline;
+each source line whitespace-collapsed after stripIntakeHeaders, curly quotes
+and apostrophes folded straight on both sides) in one of three layouts: (a)
+the requirement's opening words (its first 40 characters, case-folded) on one
+line with the ref BEFORE them as a whole token that is the NEAREST ID-shaped
+token to them (a token of the ref shape carrying a digit; a bare number only
+when the ref is one), so a table row flattened onto one line binds each item
+to its own ID; (b) a wrapped column, the line's text right after the ref token
+being a prefix of the requirement of at least 12 characters; (c) the ID alone
+on its line, the next non-empty line opening the requirement. Sanitized to
+`[A-Za-z0-9][A-Za-z0-9.-]{0,15}` with a single letter refused (outline.ts
+`sanitizeClientRef`). A ref equal to the section's own label is the section,
+not an item, and is refused. The reader prompt asks it to copy a
+questionnaire item's text exactly, starting from its first word.
+
+**Questionnaire sections are derived, never stored.** outline.ts
+`isQuestionnaireSection(requirements, label)`: a structure node whose
+requirements carry at least three distinct client refs
+(`QUESTIONNAIRE_MIN_REFS`); reserved `__` labels never qualify.
+`questionnaireRefs` lists a node's refs in the CLIENT's order (requirement
+ordinal ascending, each ref at its first appearance, so a compound item split
+into several requirements is answered once). Pure and import-free; the reader,
+the drafter, the generate route's landing, resolve-draft, the workspace and the
+gate all read it, so a re-read stays coherent everywhere at once.
+
+**Answers (drafter).** For a questionnaire section the drafter returns, in
+place of that section's visuals vocabulary (framing prose stays allowed, at
+most four paragraphs), `answers: [{ref, verdict: "yes"|"partial"|"no"|"na",
+subject, explanation, cites, rateCodes?}]`. The prompt lists ONE line per
+DISTINCT ref (brain.ts `questionnairePromptItems`: requirements split from one
+client item join with " / ", cut at a word to 600 characters; lines without a
+ref keep their place, at most 20) and at most 40 refs per call; a section with
+more is drafted in SEQUENTIAL calls of 40 refs (`questionnaireChunks`, the
+ref-less lines in the first only) by `draftQuestionnaireChunked`, which the
+generate route calls for every section (one plain `draftSection` call when the
+refs fit): each chunk's answers are screened against its own refs and merged
+first-wins in the client's order, paragraphs, cites, gaps and title come from
+the first chunk only, a failed first chunk fails the section and a failed
+later one costs only its answers, and the merged result lands in the route's
+one CAS write. The prompt says an item a [negative] fact covers is "no" or
+"partial", never "yes", and that with no supporting fact the answer is
+"partial", saying the detail is confirmed during onboarding. Screens at landing (brain.ts):
+the ref must be a client ref of THAT section's requirements (unknown dropped),
+one answer per ref (first wins), a verdict outside the enum drops the answer,
+subject <= 60 and explanation <= 700 through the round-32 sanitation (currency
+veto, digits grounded on the answer's own cites with `pricing.*` excluded,
+injection screen, bracket, dash and stacked-mark rules), a cite to a known
+fact (its own, else the section's) except that a "yes" must cite, among its
+OWN cites, at least one affirmative, non-pricing fact (never the section's by
+inheritance; partial, no and n/a keep the fallback), and `rateCodes` keeps
+only codes quote.ts `rateNoteCodes` names (items with a unit price above zero,
+minus the base-plan per-user codes `fully-managed-user` and `m365-only-user`,
+whose rate belongs to the pricing engine's own surfaces; widening that set is
+Adam's call; unknown codes drop silently; never a figure from the model). A ref nobody
+answered is never invented: it has no row, and Coverage and rule D7 name it.
+The section record stores the screened list under the additive `answers` key
+(outline.ts `SectionAnswer`), ABSENT when there are none, so a record without
+it is byte-identical to one written before.
+
+**The `response-matrix` block (content-model/blocks.ts, additive).**
+`{rows: [{ref, verdict, subject, explanation, rateNote?}]}`, HOST-built, never
+model-authored as a block: resolve-draft lifts a section's stored answers into
+ONE such block through furniture.ts `matrixFromAnswers` and appends it to the
+section's flow, after the prose and visuals. The lift, defensive and never
+repairing: only a section that IS a questionnaire section now lifts at all
+(answers left on a record by an earlier read print nothing); rows follow
+`questionnaireRefs` order; the first stored answer per ref wins; an answer
+whose ref is not on the section's requirements, whose verdict is outside the
+enum, or whose subject or explanation is not a string is skipped (its ref then
+reads as missing, D7's redraft case). `rateNote` is composed AT LIFT by the
+system, quote.ts `rateNoteFor(codes, rateCard)` ("XL Secure+: $25 per
+computer per month", each nameable code once, "; " joined, whole dollars, the
+`letterPricingParagraph` register); the model's text never reaches it. The
+block id is `bm_<label>` (one per section, so it never moves when a paragraph
+or a visual does), `generatedBy` "llm" (the subjects and explanations are the
+drafter's), `cites` the union of the kept answers' cites (the section's when
+they name none, so rule A5 keeps its join). The zod schema
+(content-model/schema.ts `responseMatrixBlockSchema`) is in `blockSchema` but
+not in `draftedBlockSchema`. The workspace runs the SAME lift over its live
+sections: page.tsx passes `rateNotes` (each nameable code's own
+`rateNoteFor([code])`, notes only, never the card) and furniture.ts
+`rateNoteFromTable` joins them exactly as `rateNoteFor` does
+(test:rfpcoverletter pins the two equal over the seed card), plus each
+requirement's `clientRef` and `ordinal`.
+
+**Matrix render, one spec (export.ts `VIS.matrix`, the workspace's
+`ResponseMatrix`).** Columns ID | RESPONSE | EXPLANATION at furniture.ts
+`MATRIX_COLUMN_FRACTIONS` (0.12 / 0.17 / 0.71) under the branded table's navy
+head, zebra rows and hairlines. ID in Archivo SemiBold 13px ink. The pill, in
+the Alive register: Yes navy filled, Partial navy outlined, No ink (dark navy)
+filled, N/A faint outlined, Archivo SemiBold 9.5px caps (the word is
+content-model `matrixVerdictLabel`). The explanation cell: the subject bold
+(Archivo Bold 13.5px ink) over the explanation (serif 13.5px), then, when the
+row carries one, "ADDED COST" caps and the rate note in serif italic. Word: the
+head row is a repeating header (`tblHeader`) and every row `cantSplit`; Word
+has no rounded run, so its pill is a square-cornered shaded or ruled run. PDF:
+rows are measured first and never split; a row that does not fit starts a new
+page that prints "<section title> (continued)" at the sheet-title position and
+the head row again (the stamping pass's quiet "<kicker> · continued" sits
+above it, as on any sheet). The screen sets the pieces the branded classes do
+not cover inline, in the same px; globals.css is unchanged.
+
+**The questionnaire kicker.** A section with matrix rows prints furniture.ts
+`matrixKicker(kicker, rows)`: its own kicker (`sectionKicker`, or the
+part-relative one on a brief) plus " · <first ref> to <last ref>" (one row:
+the one ref), set in caps: "SECTION 1 · OC-01 TO OC-06". `buildExportView`
+applies it to both files and the workspace to its sheet head. Every other
+sheet's kicker is unchanged, byte for byte.
+
+**The summary furniture.** When any section carries a matrix, a SYSTEM sheet
+of its own, in the Alive "How to Read This Response" register and the house
+section chrome, prints directly BEFORE the first such section's sheet (print
+order), on all three surfaces (the workspace's `matrix-summary` doc sheet,
+Word's `summarySheetDocx`, the PDF's `summarySheetPdf`); the first matrix
+section's own sheet then paginates like any other. Kicker
+"QUESTIONNAIRE · OVERVIEW" and title "How to Read This Response"
+(furniture.ts `MATRIX_SUMMARY_KICKER` / `_TITLE`), then fixed system copy
+(`matrixSummaryIntro`: each item carries its ID, a one-word response and a
+short explanation; plus, when the index prints, that items with an added cost
+or a third party are listed with the rate that applies), then, when any row
+carries a rate note, the "Items that involve added cost or a third party"
+index as a branded two-column table (Item | What it involves, the ref and its
+rate note), then "RESPONSE SUMMARY" and the tiles in the stat-tile chrome, all
+computed from the stored rows and the client's refs alone (furniture.ts
+`matrixSummaryOf(sections, allQuestionnaireRefs(requirements))`, zero model
+text): "<n>" / "of <total> items answered yes" where the total counts EVERY
+client ref of every questionnaire section, answered or not, "<n>" / "answered
+partial, with the reason given", "<n>" / "answered no", and a fourth "<n>" /
+"answered N/A, not applicable" tile only when a row is n/a; then the line
+naming every item answered no by its subject with the ref after it ("Answered
+no: No exit dependency (OC-08) and Fee not itemized (AT-05).", `matrixNoLine`;
+the ref alone when a row has no subject). resolve-draft puts the composed strings on the new optional
+`ResolvedProposal.matrixSummary` (`{label, tiles, noLine, costIndex}`), ABSENT
+without a matrix and outside the content hash (presentation of rows the hash
+already covers); `ExportView.matrixSummary` carries it to both emitters, and
+the workspace computes the same call over its rows.
+
+**The `client-echo` block.** Additive content-model kind and a model-authorable
+draft kind: `{entries: [{title?, said, saidBy?, answer, willSee?}]}`, 1 to 6
+entries. Grounding at parse (draft-blocks.ts, every check blocking per entry):
+`said` (<= 300) is kept only when its whitespace-collapsed form is a SUBSTRING
+of the collapsed, stripIntakeHeaders'd client text on WORD BOUNDARIES (no
+letter or digit glued to either end, so "happy with ..." cut out of "unhappy
+with ..." drops) (the echo corpus, brain.ts `echoCorpusOf`: the fenced source
+with each line the injection screen drops REPLACED by the never-matching
+`ECHO_SCREENED_MARK` rather than removed, so no quote can span the gap; threaded into
+`parseModelVisuals` the way the round-33 kicker corpus is, for brief and
+real-RFP drafting alike; it is the fenced source, never another section, and
+it never feeds any other turn). A quote differing by one character drops; a
+quote is never paraphrased or truncated to pass. `saidBy` (<= 60) is kept only
+when it attributes the quote in the source: as whole words on a source line
+the quote itself touches, within 120 characters of it, or in an attribution
+pattern beside it across a line break ("Name:" or "Name, Title:" right before
+it, "(Name ...)" or an em dash, en dash, "--" or "~" and the name right after
+it; a lone hyphen is a bullet, not an attribution); a name merely nearby (a
+contact line above a complaint) is dropped with the entry kept. `title`
+(optional, <= 60) is an XL.net-voice sub-head ("Too much customer oversight")
+screened as a matrix subject is (one line, letters, no currency, no injection
+hit, digits its cites state); a failing title drops the entry, as `willSee`
+does. `answer` (<= 700) and `willSee` (<= 200) are
+XL.net's voice through the full round-32 sanitation (fact-grounded digits with
+`pricing.*` excluded, currency veto, injection screen). An entry failing
+`said` drops; a block with no surviving entry drops. The drafter is told to
+use it when the source states pain points, criteria or complaints in its own
+words, at most one client-echo per section and never on a boilerplate list of
+requirements, to copy quotes character for character, to title each entry, to
+answer from the facts, and to give one line of what the client will SEE. A
+REAL RFP's section drafter otherwise sees only its requirement lines, so its
+user message gains, LAST, a fenced block headed "THE CLIENT'S OWN WORDS FOR
+THIS SECTION (data, for verbatim quoting only):" (brain.ts `clientWordsFor`:
+the echo corpus's lines holding one of the section's requirement anchors,
+outline.ts `requirementAnchor`, the groundClientRef opening, each with the one
+line after it, source order, whole lines up to 2000 characters, never the
+screened mark); it is byte-absent for a brief, with visuals off, for a
+questionnaire section and when no line matches, and test:rfpletter pins it as
+a named addition over the round-33 user message. The §5.17.7 testimonial
+pull-quote ban STANDS: this lane prints only the client's own verbatim words,
+inside quote chrome, so attacker-authored source text can only make the
+document quote the attacker, never steer a prompt.
+
+**Echo render, one spec (export.ts `VIS.echo`, the workspace's
+`ClientEcho`).** Per entry: a 22px navy numbered circle beside the entry's
+bold `title` (Archivo Bold 15px ink, the Alive pain-point sub-head) with
+"WHAT YOU TOLD US" on the line under it, or, with no title, beside "WHAT YOU
+TOLD US" itself (Archivo SemiBold caps, navy), the client's line in serif italic 16px ink
+inside typographic quotes (furniture.ts `echoQuote`, nothing else changed),
+the attribution in caps when stored, the answer's paragraphs at body size
+(`echoParagraphs`), and, when stored, the existing callout chrome titled
+"What you will see". Entries number 1..n within the block. Word cannot draw a
+numbered circle, so it places `public/brand/rfp-ornaments/echo-1.png` ..
+`echo-6.png` (88px, the 22px disc at 4x with its Archivo Bold numeral,
+export-assets `echoNumbers`); the PDF and the screen draw it as a vector.
+
+**The span and locator scheme (content-model `blockTextSpans`, the surface
+the gate's rules and `findingSig` read).** `response-matrix`:
+`rows[i].ref`, `rows[i].verdict` (the pill's printed word), `rows[i].subject`,
+`rows[i].explanation`, `rows[i].rateNote` (only when present), `i` the row's
+index in the stored block, each with the section's `sectionId` and the block's
+`blockId` (`bm_<label>`). `client-echo`: `entries[i].title`,
+`entries[i].said`, `entries[i].saidBy` and `entries[i].willSee` (title, saidBy
+and willSee only when present),
+`entries[i].answer`, with the visual's block id. The summary scans under
+location `matrix-summary` with no section or block id (no section's Fix-it
+route claims it): `tiles[i].value`, `tiles[i].label`, `noLine`,
+`costIndex[i].ref`, `costIndex[i].rateNote`. The roadmap sentence is letter
+field `roadmap`.
+
+**Gate and Coverage.** validators/matrix.ts (client-safe, total over hostile
+stored shapes) is the one reader of matrix rows for the gate and Coverage.
+New D-series rules: D7 (warn) every client ref of a matrix section has exactly
+one row, the missing refs named; D8 (warn) rows follow requirement ordinal
+order; D9 (block) every verdict is in the enum, so a corrupt row never prints
+as a blank pill. check-fixes: D7 gets a redraft recipe for that section; D8,
+D9 and any finding located on a matrix row get an honest `{kind: "none"}`
+(the block is host-built; Tron cannot edit it; the matrix message tells staff
+to use Redraft on the section's sheet). ANY rule's finding located on an echo
+quote or its attribution (`entries[i].said` / `entries[i].saidBy`: an A-series
+phrase, D2's filler words, any phrase scan) is `{kind: "none"}` with
+check-fixes `ECHO_QUOTE_FIX_MESSAGE` (the client's verbatim words; remove the
+echo entry if it should not appear): a quote is never written into a Tron
+instruction, alone or grouped. D7's suggestion says an item no fact supports
+needs its knowledge added first, then a redraft. Rule B7 sanctions a figure in
+`rows[i].rateNote` and `costIndex[i].rateNote` ONLY when the rate card states
+it (an item's unit price or a figure its note states), so a unit price in a
+subject, an explanation or prose still blocks. Coverage counts a client-ref
+requirement with no row as uncovered (the analyst's "a missing ref becomes a
+Coverage gap"): resolve-draft passes the content-model requirements with the
+additive `clientRef` (content-model/ingest.ts `Requirement.clientRef?`) and
+wraps its coverage in validators/matrix.ts `withMatrixCoverage`; the
+workspace's Coverage pane shows such a requirement of a drafted questionnaire
+section as "No row" (an undrafted section's items stay "Not yet") through the
+same module's `matrixRowGaps` over the rows the sheet shows, and labels every
+requirement that carries a client ref "<label> · <ref>". `blockTextSpans` is total over hostile stored rows and
+entries (a null row or a non-string field yields no span, never a throw). The lift already drops what D8 and D9 catch, so on a lifted
+document they are backstops against a hand-built or legacy block.
+
+**SLA table (Q3).** draft-blocks.ts `buildSlaTable` (beside
+`buildServiceStatsBlock`) parses `fact_operations_sla_targets_v1`'s statement
+into PRIORITY | RESPONSE | TARGET RESOLUTION rows (a DEFINITION column only
+when a fact states one), an existing `table` block of origin "sla" citing that
+fact. It is offered through the visuals op (`VISUALS_ACTIONS` gains "sla"; the
+workspace's Add visual menu gains "SLA table", mirroring "Service stats") and
+auto-added at draft landing on the `pickServiceStatsSection` section when no
+table already covers SLA, under the one-origin-one-section rule. It is the
+existing table kind, so it renders identically on all three surfaces with no
+new render code.
+
+**Real-RFP cover lede and the letter roadmap (Q4, furniture.ts).** A real RFP
+with a stored `rfp_title` reads "Prepared for <client> in response to your
+<rfpTitle>." (with the Attention clause when a contact is stored; the client
+semibold as before through `coverLedeParts`); `coverLede` takes the new
+optional `rfpTitle`, and without it every lede is byte-identical. A brief
+ignores it. The stored title is tidied first (furniture.ts `ledeRfpTitle`, the
+way doc-title.ts `composeDocTitle` tidies the subject: an em dash or a
+lookalike, U+2015, U+2E3A, U+2E3B, U+FE58, U+FE31, U+FE32, and a spaced en dash
+become " · ", whitespace collapses), so no em dash can reach the lede, and a
+title the generic-subject screen refuses ("REQUEST FOR PROPOSALS", a due-date
+line) keeps today's lede; the screen is doc-title.ts's GENERIC_SUBJECT copied
+(doc-title.ts carries a lookbehind and furniture.ts ships to the browser) and
+test:rfpcoverletter pins the two equal. The letter gains ONE system sentence, `letterRoadmapSentence`,
+composed from what the document holds: the questionnaire sections ("Section 1
+and Section 2 answer every item of your questionnaire by its own ID, with a
+summary of the answers first"), a brief's parts ("the response runs in three
+parts"), the Investment page ("the Investment page sets out the pricing"),
+opening "In the pages that follow, ". It is printed by
+`letterParagraphsWithPricing(body, pricing, roadmap)` directly BEFORE the
+pricing paragraph (at `pricingParagraphIndex`), on all three surfaces;
+`ResolvedLetter.roadmap` is optional and ABSENT when null. It says "every
+item of your questionnaire by its own ID" ONLY when every client ref of every
+questionnaire section has a row (furniture.ts `matrixComplete`); otherwise it
+says the sections "answer your questionnaire item by item", never "every". It is composed only
+when at least one section carries a matrix: a document without one (every
+real RFP and brief before round 34) prints its letter byte-identically, which
+the round-33 real-RFP pins and the brief page counts require. The §5.17.20
+prompt ban on the model describing the layout stays.
+
+**Byte identity.** Every new piece is ABSENT when its input is: no answers, no
+matrix block, no summary key, no roadmap key, no `rfpTitle`, no echo block.
+The round-33 pins (the real-RFP fixture's Word XML, PDF page count and texts,
+docx image order and media set; the round-32 and round-33 briefs' page
+counts) pass unchanged.
+
+**Tests and harness.** test:rfpcoverletter adds the rfpTitle lede cases, the
+roadmap's placement and its null cases, the lift (client order, first wins,
+defensive skips, questionnaire sections only, system rate notes, cites union),
+the range kicker, the summary and no line, `rateNoteFromTable` equal to
+`rateNoteFor`, the resolve over the questionnaire fixture (one `bm_<label>`
+block closing each section, the summary, the roadmap, the lede, the kickers,
+the span fields), the echo spans, no round-34 furniture on the earlier
+fixtures, the gate at no finding on both new fixtures, and in both files the
+kickers, pills, summary captions, cost index, roadmap and lede, the PDF's
+"(continued)" page with the head row repeated, Word's `tblHeader` and
+`cantSplit`, and the echo's verbatim quotes, attribution and chrome.
+rfp:render-fixture renders two more real RFPs from
+`scripts/rfp-render-fixture.ts`: `r34-questionnaire`
+(`buildR34QuestionnaireInput`, shaped like Alive pp20-26: two client sections
+with invented IDs OC-01..OC-06 and AC-01..AC-05, mixed verdicts with two "no",
+two rows with rate notes, section 1 long enough to carry its matrix onto a
+"(continued)" page, the stored rfpTitle) and `r34-echo`
+(`buildR34EchoInput`, shaped like pp4-6: three entries, one attributed, quotes
+verbatim from the stub document's text).
+
+**Out of scope this round (Adam's call or Adam's content).**
+- The attachments library and submission zip: it needs XL.net's real
+  documents and confidentiality rulings. It is the designed NEXT round, per the
+  analyst's design sketch: a library table of XL.net's attachable documents,
+  `{{att:N}}` tokens a section may cite, a "Supporting Documents" sheet listing
+  what is attached, and a zip export of the response plus its attachments.
+- The mixed XL.net-parts plus client-part layout (rule C4 and the round-8
+  ruling).
+- The discovery-led (XLerate / TAP) intake mode (the Meiji mode): it needs its
+  own intake form and its own part map (interview notes and a Technology
+  Alignment Plan are neither an RFP's structure nor a brief's), which is a
+  round of its own.
+- Rate-card rows for onsite, workstation, storage and scan figures (the
+  values are Adam's).
+- The insurance amount (rule B7 stands).
+- A co-managed fact (one seed fact from Adam).
+
+**Open.** Word's pills are square-cornered (no rounded run); the screen and
+the PDF round them. Echo entries number within their block, so two echo
+blocks in one document each start at 1. The roadmap names sections by their
+sheet kicker, so a pre-worded label prints as worded. `client_ref` cannot be
+re-grounded without a re-read (`rfp:reground` carries `rfp_title` but never
+touches requirements). A mandatory client item with no row draws BOTH rule
+C3 (block) and D7 (warn); that pairing is contract-intended (C3 says it is
+unanswered, D7 names the matrix gap and the redraft). Quote equivalence is
+NFKC's, accepted: a superscript folds ("10²" matches "102"). Kicker
+ranges are whole-section ("OC-01 to OC-06"), not per page.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

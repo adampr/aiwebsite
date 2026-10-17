@@ -450,6 +450,91 @@ export function partPricingDek(
   return `Priced ${totals.length === 2 ? "two" : "several"} ways, ${list} per month, until the real split of users is confirmed.`;
 }
 
+/* ------------------------------------------------------------------------ */
+/* Questionnaire rate notes (§5.17.22, round 34)                            */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * The rate-card codes a questionnaire answer may name in `rateCodes`: every
+ * item that carries its own unit price. A zero-priced item (onboarding,
+ * which the engine derives from the base monthly; Microsoft 365 licensing,
+ * passed through at cost) has no figure a note could state, so it is not a
+ * nameable code: the drafter is never offered it and a stored one drops.
+ * The base-plan codes (RATE_NOTE_EXCLUDED_CODES: the per-user base rates)
+ * are not nameable either: the base rate belongs to the pricing engine's own
+ * surfaces (the Investment sheet, the letter's pricing paragraph), never to
+ * a matrix row. Widening this set is Adam's call.
+ * Pure and client-safe; the drafter's screen (brain.ts) and rateNoteFor read
+ * the same set, so a code that stores always renders.
+ */
+export const RATE_NOTE_EXCLUDED_CODES: ReadonlySet<string> = new Set([
+  "fully-managed-user",
+  "m365-only-user",
+]);
+
+export function rateNoteCodes(card: RateCard | null | undefined): string[] {
+  const items = card && Array.isArray(card.items) ? card.items : [];
+  const out: string[] = [];
+  for (const i of items)
+    if (
+      i &&
+      typeof i.code === "string" &&
+      !RATE_NOTE_EXCLUDED_CODES.has(i.code) &&
+      i.unitPrice &&
+      Number.isInteger(i.unitPrice.cents) &&
+      i.unitPrice.cents > 0 &&
+      !out.includes(i.code)
+    )
+      out.push(i.code);
+  return out;
+}
+
+/** A rate-card unit as prose: "user/month" -> "per user per month",
+ *  "one-time" -> "one-time", "session" -> "per session". */
+function unitPhrase(unit: string): string {
+  const u = String(unit ?? "").trim();
+  if (!u) return "";
+  if (u === "one-time") return "one-time";
+  return u
+    .split("/")
+    .map((p) => `per ${p.trim()}`)
+    .join(" ");
+}
+
+/**
+ * The SYSTEM rate sentence a matrix row carries for an answer's `rateCodes`
+ * (the "Items that involve added cost or a third party" register), composed
+ * from the rate card in force, never by the model: each nameable code
+ * (rateNoteCodes) as "<label>: <unit price> <unit>", whole dollars without
+ * ".00" and cents only when there are some (partPricingDek's register),
+ * joined with "; " in the order given, each code once:
+ *   ["xl-secure-plus"] -> "XL Secure+: $25 per computer per month"
+ * Unknown and zero-priced codes are skipped silently. null when no code is
+ * left. Pure and client-safe: resolve-draft calls it at lift time with the
+ * rate card the export uses.
+ *
+ * EXACT, never rounded (rule B7 passes a rateNote figure only when the rate
+ * card states it verbatim): the figure is formatMoney cents:"auto" of the
+ * item's own integer unit price, which drops ".00" and nothing else, so
+ * $3.20 prints "$3.20", never "$3". An item whose price is not a whole
+ * number of cents has no exact figure and is skipped, never rounded.
+ */
+export function rateNoteFor(codes: string[], rateCard: RateCard | null | undefined): string | null {
+  if (!Array.isArray(codes) || !rateCard || !Array.isArray(rateCard.items)) return null;
+  const nameable = new Set(rateNoteCodes(rateCard));
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  for (const code of codes) {
+    if (typeof code !== "string" || seen.has(code) || !nameable.has(code)) continue;
+    seen.add(code);
+    const it = rateCard.items.find((i) => i.code === code);
+    if (!it || !Number.isInteger(it.unitPrice?.cents)) continue;
+    const unit = unitPhrase(it.unit);
+    parts.push(`${it.label}: ${formatMoney(usd(it.unitPrice.cents), { cents: "auto" })}${unit ? ` ${unit}` : ""}`);
+  }
+  return parts.length ? parts.join("; ") : null;
+}
+
 export type BuiltQuote = {
   quote: PricingQuote;
   /** True when the quote is renderable (has at least one illustration). */

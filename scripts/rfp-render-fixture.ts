@@ -30,6 +30,17 @@
  * prints the system-composed pricing dek and its Investment sheet is
  * "Section 4.1" (section 8 then "Section 4.2"). The visual
  * fixture above is the REAL-RFP twin: test:rfpcoverletter pins its bytes.
+ *
+ * Round 34 (§5.17.22): two more REAL RFPs. `buildR34QuestionnaireInput` is
+ * shaped like the Alive Telecom reference's questionnaire (pp20-26): two
+ * client sections whose items carry invented IDs (OC-01..OC-06,
+ * AC-01..AC-05), mixed verdicts with two "no", two rows carrying system rate
+ * notes, section 1 long enough that its PDF matrix carries onto a
+ * "(continued)" page, the summary tiles and the added-cost index opening
+ * section 1, the stored rfpTitle in the cover lede and the letter's system
+ * roadmap sentence. `buildR34EchoInput` is shaped like pp4-6: a client-echo
+ * block of three entries, one with an attribution, quotes verbatim from the
+ * stub document's text.
  */
 
 import fs from "node:fs";
@@ -114,6 +125,7 @@ export function buildFixtureGateInput(
     contactTitle: null,
     clientAddress: null,
     proposalHeadline: null,
+    rfpTitle: null,
     structureConfirmedAt: DRAFTED_AT,
     dueDate: null,
     status: "extracted",
@@ -167,6 +179,7 @@ export function buildFixtureGateInput(
     mandatory: true,
     coverageState: "covered",
     coverageNote: null,
+    clientRef: null,
     createdAt: DRAFTED_AT,
   }));
   return {
@@ -587,6 +600,357 @@ export function buildR33GateInput(
   };
 }
 
+/* ------------------------------------------------------------------------ */
+/* The round-34 fixtures (§5.17.22): questionnaire matrix and client echo    */
+/* ------------------------------------------------------------------------ */
+
+export const R34_CLIENT = "Kestrel Telecom";
+export const R34_RFP_TITLE = "Vendor Due Diligence Questionnaire";
+const R34_DOC_ID = "00000000-0000-4000-8000-00000000d034";
+const R34_PROPOSAL_ID = "00000000-0000-4000-8000-0000000000p4";
+
+/** One questionnaire item: the requirement the read stored (with its
+ *  clientRef) and the answer the drafter landed for it. */
+type R34Item = {
+  ref: string;
+  text: string;
+  verdict: "yes" | "partial" | "no" | "na";
+  subject: string;
+  explanation: string;
+  cites: string[];
+  rateCodes?: string[];
+};
+
+export function r34Items(): { label: string; title: string; items: R34Item[] }[] {
+  return [
+    {
+      label: "1",
+      title: "Ownership, Control & Portability",
+      items: [
+        {
+          ref: "OC-01",
+          text: "Describe which systems, accounts and licenses remain owned by Kestrel and which are provided by the vendor.",
+          verdict: "yes",
+          subject: "Who owns what",
+          explanation:
+            "Kestrel owns its tenant, its domain and its licenses, and keeps its own administrative access. XL.net provides, inside the flat fee, Kaseya for monitoring and management, Autotask for ticketing, SentinelOne on every endpoint, Barracuda email security, and KnowBe4 and BullPhish for security awareness. Every one of those platforms is run by XL.net engineers, and none of them moves the ownership of your environment to us.",
+          cites: [factId("service.flat-fee"), factId("tooling.rmm"), factId("tooling.psa"), factId("tooling.edr"), factId("tooling.email-security"), factId("tooling.security-awareness")],
+        },
+        {
+          ref: "OC-02",
+          text: "Identify the named individuals accountable for the account.",
+          verdict: "yes",
+          subject: "Named, accountable people",
+          explanation:
+            "Your account has a named XLTO, the XL.net Technology Officer who owns strategy and acts as your strategic vendor manager, and a named System Analyst who owns the health of the environment. When the XLTO is out, a Proactive Manager is the designee, so someone specific is always accountable, and the XLTO is the one who informs you in the event of a breach.",
+          cites: [factId("operations.named-roles")],
+        },
+        {
+          ref: "OC-03",
+          text: "Describe what is transferred to Kestrel or a successor provider at the end of the agreement.",
+          verdict: "partial",
+          subject: "What transfers at exit",
+          explanation:
+            "Documentation, the asset and configuration inventory and every credential transfer to you in standard formats, with knowledge transfer and an orderly hand-over of admin access. The management agents and the history held inside our own platforms do not transfer as running instances: we remove the agents, and your next provider deploys its own tools from the documentation we hand over.",
+          cites: [factId("offboarding.terms")],
+        },
+        {
+          ref: "OC-04",
+          text: "State any fees or minimum terms that apply on exit.",
+          verdict: "yes",
+          subject: "No exit fees",
+          explanation:
+            "There are no offboarding or transition-out fees. The agreement is a revolving 90-day term, and ending it takes 90 days' written notice, at any point. We have to keep earning the relationship, quarter after quarter, rather than relying on a term to hold it.",
+          cites: [factId("offboarding.terms"), factId("contract.term"), factId("contract.no-lock-in-wording")],
+        },
+        {
+          ref: "OC-05",
+          text: "Confirm that backups and disaster recovery can be hosted in a Kestrel-owned data center.",
+          verdict: "no",
+          subject: "Recovery in your own data center",
+          explanation:
+            "XL.net does not run disaster recovery into a client-owned data center. Infrastructure backup and disaster recovery use Veeam, replicating into XL.net's own data center through Veeam Cloud Connect, and backups are set up during onboarding and checked daily, so recovery never depends on hardware sitting in the building it is protecting.",
+          cites: [factId("tooling.backup-dr")],
+        },
+        {
+          ref: "OC-06",
+          text: "Describe the security tooling included and any that requires additional licensing.",
+          verdict: "partial",
+          subject: "Security tooling and what it adds",
+          explanation:
+            "SentinelOne endpoint protection is managed on every computer inside the flat fee, with Barracuda email security and KnowBe4 and BullPhish awareness training beside it. The SentinelOne Complete license, the RocketCyber SOC and SIEM, SaaSAlerts and DNSFilter come with XL Secure+, an optional add-on priced per computer.",
+          cites: [factId("tooling.edr"), factId("tooling.email-security"), factId("tooling.security-awareness"), factId("pricing.xl-secure-plus")],
+          rateCodes: ["xl-secure-plus"],
+        },
+      ],
+    },
+    {
+      label: "2",
+      title: "Access Control & Privileged Administration",
+      items: [
+        {
+          ref: "AC-01",
+          text: "Describe how privileged credentials are stored and who can access them.",
+          verdict: "yes",
+          subject: "Vaulted, least-privilege credentials",
+          explanation:
+            "Privileged credentials live in Keeper and Bitwarden vaults, encrypted, with least-privilege role-based access, so each engineer holds only what their work needs.",
+          cites: [factId("tooling.credential-vaults")],
+        },
+        {
+          ref: "AC-02",
+          text: "Confirm that multi-factor authentication is enforced for administrative access.",
+          verdict: "yes",
+          subject: "MFA on every privileged path",
+          explanation:
+            "MFA is Duo or Okta, depending on what suits your environment, across Microsoft 365, Google Workspace and remote access.",
+          cites: [factId("tooling.mfa")],
+        },
+        {
+          ref: "AC-03",
+          text: "Confirm that the vendor deploys a dedicated privileged access management appliance on site.",
+          verdict: "no",
+          subject: "No on-site access appliance",
+          explanation:
+            "XL.net does not deploy a dedicated privileged access appliance. Privileged credentials are held in encrypted vaults with role-based access, and every sign-in to Microsoft 365, Google Workspace and remote access sits behind MFA.",
+          cites: [factId("tooling.credential-vaults"), factId("tooling.mfa")],
+        },
+        {
+          ref: "AC-04",
+          text: "Provide evidence of independent audit of access controls.",
+          verdict: "yes",
+          subject: "Audited controls",
+          explanation:
+            "XL.net holds ISO 27001:2022 and SOC 2 Type 2, audited annually, and both audits test how access is granted, reviewed and removed.",
+          cites: [factId("compliance.iso-27001"), factId("compliance.soc-2")],
+        },
+        {
+          ref: "AC-05",
+          text: "Describe backup and restore of Microsoft 365 mailboxes and files.",
+          verdict: "partial",
+          subject: "Microsoft 365 backup and restore",
+          explanation:
+            "Microsoft 365 backup is Datto SaaS Protection, covering Exchange Online, OneDrive, SharePoint and Teams. It is priced separately from the managed fee, and restores are handled by the service desk as a normal ticket, with no per-restore fee.",
+          cites: [factId("tooling.m365-backup"), factId("pricing.datto-saas-protection")],
+          rateCodes: ["datto-setup", "datto-retention-1yr"],
+        },
+      ],
+    },
+  ];
+}
+
+/** The round-34 questionnaire sections: one framing paragraph each and the
+ *  stored `answers` (the frozen seam), as the generate route lands them. */
+export function r34QuestionnaireSections(): FixtureSection[] {
+  const at = FIXTURE_UPDATED_AT;
+  const groups = r34Items();
+  return [
+    {
+      label: "__letter",
+      title: "Cover Letter",
+      paragraphs: [
+        `Thank you for the opportunity to respond to ${R34_CLIENT}'s due diligence questionnaire. A telecom operator needs to know exactly what it owns, who can reach its systems, and what happens if it ever leaves, and the answers that follow are written to make each of those plain.`,
+        "XL.net is a flat-fee managed IT provider, and because the fee does not change with ticket volume, preventing problems serves both of us.",
+        "We look forward to discussing this with you.",
+      ],
+      cites: [factId("service.flat-fee")],
+      gaps: [],
+      generatedBy: "llm",
+      updatedAt: at,
+    },
+    ...groups.map(
+      (g, gi): FixtureSection => ({
+        label: g.label,
+        title: g.title,
+        paragraphs: [
+          gi === 0
+            ? // The how-to-read copy is the summary sheet's own now (F6), so the
+              // first matrix section frames itself like any other section.
+              `Ownership decides what ${R34_CLIENT} keeps if it ever changes providers, so each answer here says plainly what stays yours and which items bring in a third party.`
+            : "Privileged access is where a managed provider can do the most harm, so every answer here names the control and the tool behind it.",
+        ],
+        cites: [factId("service.flat-fee")],
+        gaps: [],
+        generatedBy: "llm",
+        updatedAt: at,
+        answers: g.items.map((it) => ({
+          ref: it.ref,
+          verdict: it.verdict,
+          subject: it.subject,
+          explanation: it.explanation,
+          cites: it.cites,
+          ...(it.rateCodes ? { rateCodes: it.rateCodes } : {}),
+        })),
+      }) as FixtureSection
+    ),
+  ];
+}
+
+/** The round-34 questionnaire gate input: a real RFP, the stored rfpTitle,
+ *  requirements carrying their clientRefs in the client's order. */
+export function buildR34QuestionnaireInput(over: Partial<DraftGateInput> = {}): DraftGateInput {
+  const groups = r34Items();
+  const sections = r34QuestionnaireSections();
+  const structure = groups.map((g) => ({ label: g.label, title: g.title }));
+  const base = buildFixtureGateInput(sections);
+  let ordinal = 0;
+  return {
+    ...base,
+    doc: {
+      ...base.doc,
+      id: R34_DOC_ID,
+      title: `${R34_CLIENT} · ${R34_RFP_TITLE}`,
+      clientName: R34_CLIENT,
+      structureJson: JSON.stringify(structure),
+      rfpTitle: R34_RFP_TITLE,
+    },
+    proposal: {
+      ...base.proposal,
+      id: R34_PROPOSAL_ID,
+      documentId: R34_DOC_ID,
+      sectionsJson: JSON.stringify(sections),
+    },
+    structure,
+    requirements: groups.flatMap((g) =>
+      g.items.map((it) => ({
+        ...base.requirements[0]!,
+        id: `00000000-0000-4000-8000-${String(3400 + ordinal).padStart(12, "0")}`,
+        documentId: R34_DOC_ID,
+        structureLabel: g.label,
+        text: it.text,
+        ordinal: ordinal++,
+        clientRef: it.ref,
+      }))
+    ),
+    ...over,
+  };
+}
+
+export const R34_ECHO_CLIENT = "Larkspur Family Practice";
+const R34_ECHO_DOC_ID = "00000000-0000-4000-8000-00000000d035";
+const R34_ECHO_PROPOSAL_ID = "00000000-0000-4000-8000-0000000000p5";
+
+/** The echo's client lines, exactly as the stub document states them. */
+export const R34_ECHO_SAID = [
+  "Tickets were marked complete before anyone confirmed the problem was actually fixed.",
+  "We never know who owns our account, or who to call when something gets escalated.",
+  "Documentation lags the work, so every fix starts with rediscovering how things were set up.",
+];
+export const R34_ECHO_BY = "Practice Administrator";
+
+/** The stub document's text: the quotes the echo grounds on sit in it. */
+const R34_ECHO_SOURCE = [
+  "Larkspur Family Practice: Request for Proposal, Managed IT Services",
+  "Section 2. Current challenges",
+  `${R34_ECHO_SAID[0]}`,
+  `${R34_ECHO_BY}: "${R34_ECHO_SAID[1]}"`,
+  `${R34_ECHO_SAID[2]}`,
+].join("\n");
+
+export function r34EchoBlock(): DraftBlock {
+  return {
+    kind: "client-echo",
+    entries: [
+      {
+        title: "Closed tickets that were not fixed",
+        said: R34_ECHO_SAID[0]!,
+        answer:
+          "At XL.net a ticket closes against the outcome, not the activity. The person reporting an issue also sets its priority, so an issue that matters to your front desk is handled as the priority they give it.\nAnd you can write your preferred service level language into the agreement itself.",
+        willSee: "No ticket marked done that your staff has to test again themselves.",
+      },
+      {
+        title: "No clear owner for your account",
+        said: R34_ECHO_SAID[1]!,
+        saidBy: R34_ECHO_BY,
+        answer:
+          "Your account has a named XLTO who owns strategy and acts as your strategic vendor manager, and a named System Analyst who owns the health of your systems. Every issue follows a defined escalation path, so nothing waits on one person.",
+        willSee: "Two names you know, and the path an issue takes when it escalates.",
+      },
+      {
+        title: "Documentation that lags the work",
+        said: R34_ECHO_SAID[2]!,
+        answer:
+          "Documentation is part of the work under what we call the Documentation Commandments: every task follows a written procedure, and if none exists, the engineer writes one the first time. Procedures live in SweetProcess, so the next engineer starts from what the last one learned.",
+      },
+    ],
+    id: "v_0000e001",
+    after: 1,
+    cites: [
+      factId("contract.sla-client-defined"),
+      factId("operations.named-roles"),
+      factId("operations.escalation-tiers"),
+      factId("tooling.process-governance"),
+    ],
+    generatedBy: "llm",
+  } as unknown as DraftBlock;
+}
+
+export function r34EchoSections(): FixtureSection[] {
+  const at = FIXTURE_UPDATED_AT;
+  return [
+    {
+      label: "__letter",
+      title: "Cover Letter",
+      paragraphs: [
+        `Thank you for the opportunity to propose managed IT services for ${R34_ECHO_CLIENT}. Your request was candid about what has not worked, and this response answers those points first, in your own words.`,
+        "We look forward to discussing this with you.",
+      ],
+      cites: [factId("service.flat-fee")],
+      gaps: [],
+      generatedBy: "llm",
+      updatedAt: at,
+    },
+    {
+      label: "2",
+      title: "Current Challenges",
+      paragraphs: [
+        "Your request named three things that have not worked with your current provider. Each is answered below, with what you will see change.",
+        "The flat monthly fee is what makes these answers durable: because it does not change with ticket volume, preventing a problem serves both of us.",
+      ],
+      cites: [factId("service.flat-fee")],
+      gaps: [],
+      generatedBy: "llm",
+      updatedAt: at,
+      blocks: [r34EchoBlock()],
+    },
+  ];
+}
+
+export function buildR34EchoInput(over: Partial<DraftGateInput> = {}): DraftGateInput {
+  const sections = r34EchoSections();
+  const structure = [{ label: "2", title: "Current Challenges" }];
+  const base = buildFixtureGateInput(sections);
+  return {
+    ...base,
+    doc: {
+      ...base.doc,
+      id: R34_ECHO_DOC_ID,
+      title: `${R34_ECHO_CLIENT} RFP`,
+      clientName: R34_ECHO_CLIENT,
+      rawText: R34_ECHO_SOURCE,
+      structureJson: JSON.stringify(structure),
+    },
+    proposal: {
+      ...base.proposal,
+      id: R34_ECHO_PROPOSAL_ID,
+      documentId: R34_ECHO_DOC_ID,
+      sectionsJson: JSON.stringify(sections),
+    },
+    structure,
+    requirements: [
+      {
+        ...base.requirements[0]!,
+        id: "00000000-0000-4000-8000-000000003500",
+        documentId: R34_ECHO_DOC_ID,
+        structureLabel: "2",
+        text: "Describe how the vendor will address the challenges listed in Section 2.",
+        ordinal: 0,
+      },
+    ],
+    ...over,
+  };
+}
+
 async function renderOne(
   outdir: string,
   input: DraftGateInput,
@@ -627,6 +991,10 @@ async function main(): Promise<void> {
   // Round 33: the four thematic parts, then the omitted-part twin.
   await renderOne(outdir, buildR33GateInput(), "resolved-r33.json", "r33-parts");
   await renderOne(outdir, buildR33GateInput({ omitPart3: true }), "resolved-r33-omit.json", "r33-parts-omit-3");
+  // Round 34: the questionnaire matrix (Alive pp20-26) and the client echo
+  // (Alive pp4-6), both real RFPs.
+  await renderOne(outdir, buildR34QuestionnaireInput(), "resolved-r34-questionnaire.json", "r34-questionnaire");
+  await renderOne(outdir, buildR34EchoInput(), "resolved-r34-echo.json", "r34-echo");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

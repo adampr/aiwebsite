@@ -1,0 +1,28 @@
+-- QUESTIONNAIRE REFS AND THE STORED SUBJECT LINE (§5.17.22, round 34,
+-- 2026-10-16). Two nullable text columns:
+-- rfp_requirements.client_ref: the client's own item ID for a requirement
+-- ("OC-01"), the reader's echo kept only when that token leads the
+-- requirement's words on the SAME line of the fenced source text (intake
+-- headers stripped; brain.ts readRfp through outline.ts groundClientRef),
+-- sanitized to [A-Za-z0-9][A-Za-z0-9.-]{0,15} with no single letter. NULL
+-- for a brief and whenever the echo did not ground. Written by
+-- runDocumentRead with the requirements, so "Read it again" and rfp:reread
+-- refresh it. A section where three or more requirements carry distinct
+-- refs is a questionnaire section (outline.ts isQuestionnaireSection), a
+-- derived property, never stored.
+-- rfp_documents.rfp_title: the solicitation's own subject line exactly as
+-- the reader grounds it (doc-title.ts groundRfpTitle, verbatim in the
+-- fenced text, injection-screened), stored beside proposal_headline in the
+-- update that stamps "extracted" so the real-RFP cover lede can read it; a
+-- re-read overwrites it, NULL when none grounded.
+-- Every pre-round row reads NULL in both, which every consumer renders
+-- exactly as it did before this migration.
+--
+-- Written against 0063's snapshot in drizzle-kit's exact format (verified:
+-- 0064.prevId equals 0063.id, and the snapshot adds these two columns and
+-- changes nothing else; a `drizzle-kit generate` against it reports no
+-- change). IF NOT EXISTS per the 0044-onward convention, so a hand-applied
+-- catch-up on the VM can run this file again without failing the deploy's
+-- db:migrate step.
+ALTER TABLE "rfp_documents" ADD COLUMN IF NOT EXISTS "rfp_title" text;--> statement-breakpoint
+ALTER TABLE "rfp_requirements" ADD COLUMN IF NOT EXISTS "client_ref" text;

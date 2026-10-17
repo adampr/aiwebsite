@@ -16,6 +16,7 @@ import {
 } from "@/lib/rfp/db";
 import { ownerDisplayName } from "@/lib/rfp/gate-run";
 import { signatureFor } from "@/lib/rfp/signature";
+import { rateNoteCodes, rateNoteFor, toRateCard } from "@/lib/rfp/quote";
 import {
   minimumAssumption,
   normGroundText,
@@ -134,6 +135,17 @@ export default async function RfpWorkspacePage({
   // The floor comes from the rate card in force, never a literal in the
   // client. No card: nulls, and the question falls back to its plain wording.
   const minimumUsers = rateCard?.minimumFullyManagedUsers ?? null;
+  // Each nameable rate-card code's SYSTEM note (quote.ts rateNoteFor, the
+  // composer resolve-draft lifts matrix rows with, §5.17.22), so the screen's
+  // matrix rows carry the notes the files print. Notes only, never the card.
+  const rateNotes: Record<string, string> = {};
+  if (rateCard) {
+    const card = toRateCard(rateCard);
+    for (const code of rateNoteCodes(card)) {
+      const note = rateNoteFor([code], card);
+      if (note) rateNotes[code] = note;
+    }
+  }
   // Non-null = the RFP's own wording places the client inside the monthly
   // minimum, so the one-tap "Use up to N users" is the PRIMARY answer on the
   // user-count question. It never seeds a count: the generate route seeds
@@ -197,6 +209,8 @@ export default async function RfpWorkspacePage({
           text: r.text,
           mandatory: r.mandatory,
           kind: r.kind,
+          clientRef: r.clientRef ?? null,
+          ordinal: r.ordinal,
         }))}
         sections={sections}
         rev={proposal?.rev ?? 0}
@@ -223,6 +237,10 @@ export default async function RfpWorkspacePage({
         // Round 33 (§5.17.21): a brief's stored part titles and deks, read
         // by the same resolution resolve-draft hands both files.
         partsJson={proposal?.partsJson ?? null}
+        // Round 34 (§5.17.22): the grounded subject line the real-RFP cover
+        // lede names, and the system rate notes the matrix rows carry.
+        rfpTitle={doc.rfpTitle ?? null}
+        rateNotes={rateNotes}
         archived={Boolean(doc.archivedAt)}
         clientName={doc.clientName}
         // The cover names who the EXPORT names (resolve-draft.ts `cover`):

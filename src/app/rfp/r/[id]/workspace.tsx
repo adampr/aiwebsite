@@ -72,22 +72,55 @@ import {
 } from "@/lib/rfp/letter";
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
 import {
+  allQuestionnaireRefs,
   closingHeadline,
   coverLede,
   coverLedeParts,
   coverTitle,
   documentParts,
+  ECHO_SEE_TITLE,
+  ECHO_TOLD_LABEL,
+  echoParagraphs,
+  echoQuote,
   letterAddresseeLines,
+  letterParagraphsWithPricing,
+  letterRoadmapSentence,
+  MATRIX_COLUMN_FRACTIONS,
+  MATRIX_COST_CAPTION,
+  MATRIX_COST_HEAD,
+  MATRIX_HEAD,
+  MATRIX_RATE_LABEL,
+  MATRIX_SUMMARY_CAPTION,
+  MATRIX_SUMMARY_KICKER,
+  MATRIX_SUMMARY_TITLE,
+  matrixComplete,
+  matrixFromAnswers,
+  matrixKicker,
+  matrixMissingLine,
+  matrixNoLine,
+  matrixSummaryIntro,
+  matrixSummaryOf,
+  matrixSummaryTiles,
+  orderDrafted,
   pageFootLeft,
   partNumeral,
-  pricingParagraphIndex,
+  rateNoteFromTable,
   recipientAddressLines,
   sectionKicker,
   sheetKicker,
   submittedByLine,
 } from "@/lib/rfp/furniture";
-import type { PricingQuote, Violation } from "@/lib/rfp/content-model";
+import {
+  matrixVerdictLabel,
+  type ClientEchoEntry,
+  type PricingQuote,
+  type ResponseMatrixRow,
+  type Violation,
+} from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
+// Pure and client-safe by contract (type-only imports, no lookbehind): the
+// gate's one reader of matrix rows, so Coverage and rule D7 agree.
+import { matrixRowGaps } from "@/lib/rfp/validators/matrix";
 // Pure and client-safe by contract (no lookbehinds, no server imports):
 // findingSig is the PERSISTED dismissal key the checks route validates, and
 // the fix recipes only read the violation + the drafted labels.
@@ -144,15 +177,20 @@ type Section = {
   /** The letter record only: its one-line argument, printed as the closing
    *  sheet's big line through furniture.ts closingHeadline (§5.17.20). */
   thesis?: string;
+  /** A questionnaire section's stored answers (§5.17.22), read only through
+   *  furniture.ts matrixFromAnswers (never trusted as typed). */
+  answers?: unknown;
 };
 
 /** The server-built visuals a person can add to a section by hand: the
  *  choices behind one "Add visual" control (three Adds in the row pushed
- *  the timestamp onto a third line at the lg pane). */
-type VisualAction = "about" | "service-stats" | "onboarding";
+ *  the timestamp onto a third line at the lg pane). Round 34 adds the SLA
+ *  table (draft-blocks.ts buildSlaTable, a `table` of origin "sla"). */
+type VisualAction = "about" | "service-stats" | "sla" | "onboarding";
 const VISUAL_ADDS: { action: VisualAction; add: string }[] = [
   { action: "about", add: "Company snapshot" },
   { action: "service-stats", add: "Service stats" },
+  { action: "sla", add: "SLA table" },
   { action: "onboarding", add: "Onboarding timeline" },
 ];
 
@@ -170,6 +208,10 @@ type Requirement = {
   text: string;
   mandatory: boolean;
   kind: string;
+  /** Round 34 (§5.17.22): the client's item ID, and the requirement's place
+   *  in the client's order, which the matrix rows follow. */
+  clientRef: string | null;
+  ordinal: number;
 };
 
 type Pane = "questions" | "coverage" | "checks" | "tron";
@@ -445,6 +487,8 @@ export function Workspace({
   clientAddress,
   proposalHeadline,
   partsJson,
+  rfpTitle,
+  rateNotes,
   archived,
   clientName,
   coverClientName,
@@ -494,6 +538,14 @@ export function Workspace({
   /** The proposal's stored part titles/deks (rfp_proposals.parts_json,
    *  §5.17.21), raw; null = the static part titles, no deks. */
   partsJson: string | null;
+  /** The read's grounded subject line (rfp_documents.rfp_title, §5.17.22):
+   *  a real RFP's cover lede says "in response to your <rfpTitle>". */
+  rfpTitle: string | null;
+  /** Each nameable rate-card code's SYSTEM note (quote.ts rateNoteFor of
+   *  that code alone, composed server-side in page.tsx), so the matrix rows
+   *  on screen carry the notes the files print (furniture.ts
+   *  rateNoteFromTable joins them as rateNoteFor does). */
+  rateNotes: Record<string, string>;
   archived: boolean;
   clientName: string | null;
   /** Who the export's cover names: the client, else the proposal title. */
@@ -961,7 +1013,7 @@ export function Workspace({
   });
   const coverLedeSplit = coverLedeParts(
     coverClientName ?? "",
-    coverLede({ intakeForm, who: coverClientName, contactName, contactTitle })
+    coverLede({ intakeForm, who: coverClientName, contactName, contactTitle, rfpTitle })
   );
   const letterAddress = recipientAddressLines(clientAddress, [
     contactName,
@@ -999,6 +1051,47 @@ export function Workspace({
         pricingPresent: true,
       })
     : null;
+  // The questionnaire matrices (§5.17.22): each drafted section's stored
+  // answers through the SAME lift resolve-draft hands both files
+  // (furniture.ts matrixFromAnswers, rows in the client's order, the rate
+  // notes the system composes), then the summary that opens the first
+  // matrix section's sheet and the letter's roadmap sentence, both from the
+  // rows alone. Empty on every document without one, which renders as before.
+  const matrixByLabel = new Map<string, ResponseMatrixRow[]>();
+  for (const s of sections) {
+    if (s.label.startsWith("__")) continue;
+    const m = matrixFromAnswers({
+      answers: s.answers,
+      label: s.label,
+      requirements,
+      rateNote: (codes) => rateNoteFromTable(codes, rateNotes),
+    });
+    if (m) matrixByLabel.set(s.label, m.rows);
+  }
+  const matrixInPrint = orderDrafted(
+    structure,
+    sections.filter((s) => !s.label.startsWith("__"))
+  ).flatMap((s) => {
+    const rows = matrixByLabel.get(s.label);
+    return rows ? [{ label: s.label, rows }] : [];
+  });
+  // The client's items, answered or not (the summary's total, the roadmap's
+  // "every"), from the same furniture.ts reader resolve-draft uses.
+  const clientRefs = allQuestionnaireRefs(requirements);
+  const matrixSummary = matrixSummaryOf(matrixInPrint, clientRefs);
+  // Coverage (§5.17.22): a client-ref requirement of a DRAFTED questionnaire
+  // section with no matrix row reads "Not yet", by the gate's own reader
+  // (validators/matrix.ts matrixRowGaps, client-safe), over the rows the
+  // sheet shows.
+  const matrixGaps = matrixRowGaps(requirements, (label) =>
+    covered.has(label) ? (matrixByLabel.get(label) ?? []) : null
+  );
+  const letterRoadmap = letterRoadmapSentence({
+    matrixKickers: matrixInPrint.map((m) => sheetKicker(m.label, docParts)),
+    partsCount: docParts?.parts.length ?? 0,
+    pricing: pricing !== null,
+    complete: matrixComplete(matrixInPrint, clientRefs),
+  });
   // The doc pane's sheets between the letter and the closing, in order.
   // Real RFP: divider 01, every structure node, divider 02, Investment
   // (exactly the pre-parts sequence). Brief: per part, its divider (absent
@@ -1013,13 +1106,14 @@ export function Workspace({
     | { kind: "legacy-divider"; which: 1 | 2 }
     | { kind: "part-divider"; n: number; num: number; title: string; dek: string | null; absent: boolean }
     | { kind: "section"; node: { label: string; title: string }; kicker: string }
+    | { kind: "matrix-summary" }
     | { kind: "pricing"; kicker: string };
-  const docSheets: DocSheet[] = [];
+  const docSheetsRaw: DocSheet[] = [];
   if (docParts && partHomes) {
     const homed = new Set<string>();
     for (const home of partHomes.parts) {
       const inFile = docParts.parts.find((p) => p.n === home.n);
-      docSheets.push({
+      docSheetsRaw.push({
         kind: "part-divider",
         n: home.n,
         num: (inFile ?? home).position,
@@ -1028,13 +1122,13 @@ export function Workspace({
         absent: !inFile,
       });
       if (home.holdsPricing)
-        docSheets.push({ kind: "pricing", kicker: inFile?.pricingKicker ?? "Pricing" });
+        docSheetsRaw.push({ kind: "pricing", kicker: inFile?.pricingKicker ?? "Pricing" });
       for (const label of home.labels) {
         const node = structure.find((n) => n.label === label);
         if (!node || homed.has(label)) continue;
         homed.add(label);
         const drafted = sections.some((s) => s.label === label);
-        docSheets.push({
+        docSheetsRaw.push({
           kind: "section",
           node,
           kicker: drafted ? sheetKicker(label, docParts) : sectionKicker(label),
@@ -1044,13 +1138,20 @@ export function Workspace({
     // Defensive: the resolution homes every label; one it missed still shows.
     for (const node of structure)
       if (!homed.has(node.label))
-        docSheets.push({ kind: "section", node, kicker: sectionKicker(node.label) });
+        docSheetsRaw.push({ kind: "section", node, kicker: sectionKicker(node.label) });
   } else {
-    docSheets.push({ kind: "legacy-divider", which: 1 });
+    docSheetsRaw.push({ kind: "legacy-divider", which: 1 });
     for (const node of structure)
-      docSheets.push({ kind: "section", node, kicker: sectionKicker(node.label) });
-    docSheets.push({ kind: "legacy-divider", which: 2 }, { kind: "pricing", kicker: "Pricing" });
+      docSheetsRaw.push({ kind: "section", node, kicker: sectionKicker(node.label) });
+    docSheetsRaw.push({ kind: "legacy-divider", which: 2 }, { kind: "pricing", kicker: "Pricing" });
   }
+  // The questionnaire summary (§5.17.22) is its OWN system sheet directly
+  // before the first matrix section's sheet, as both files print it.
+  const docSheets: DocSheet[] = docSheetsRaw.flatMap((sheet): DocSheet[] =>
+    matrixSummary && sheet.kind === "section" && sheet.node.label === matrixSummary.label
+      ? [{ kind: "matrix-summary" }, sheet]
+      : [sheet]
+  );
   // The rail (Questions / Coverage / Checks / Tron) waits for the document
   // (owner directive 2026-09-30: while the response drafts initially, do
   // not show it; it appears once it can be used, after the draft exists).
@@ -4115,13 +4216,20 @@ export function Workspace({
                   {requirements.map((r) => (
                     <div className="rfp-row" key={r.id}>
                       <div className="mono text-xs text-faint">
-                        {r.structureLabel}
+                        {r.clientRef ? `${r.structureLabel} · ${r.clientRef}` : r.structureLabel}
                       </div>
                       <p className="text-sm">{r.text}</p>
+                      {/* A drafted questionnaire section's client item with
+                          no response-matrix row (§5.17.22) is "No row": the
+                          section exists, that item's answer does not. */}
                       <span
-                        className={`badge${covered.has(r.structureLabel) ? " badge--ok" : " badge--warn"}`}
+                        className={`badge${covered.has(r.structureLabel) && !matrixGaps.has(r.id) ? " badge--ok" : " badge--warn"}`}
                       >
-                        {covered.has(r.structureLabel) ? "Drafted" : "Not yet"}
+                        {!covered.has(r.structureLabel)
+                          ? "Not yet"
+                          : matrixGaps.has(r.id)
+                            ? "No row"
+                            : "Drafted"}
                       </span>
                       {/* A route INTO the paper: without this, coverage was
                           dead text and the sheet was a scroll hunt away. */}
@@ -5274,30 +5382,34 @@ export function Workspace({
                       // where both files put it (furniture.ts
                       // pricingParagraphIndex): before the last drafted
                       // paragraph when there are two or more.
+                      // Round 34: the SYSTEM roadmap sentence
+                      // (letterRoadmapSentence, §5.17.22) sits directly
+                      // before it, through the same furniture.ts placement
+                      // both files run.
                       (() => {
                         const body = letterSec?.paragraphs.length
                           ? letterSec.paragraphs
                           : defaultLetterBody(intakeForm);
-                        const at = pricingParagraphIndex(body.length);
                         return (
                           <>
-                            {body.map((p, i) => (
-                              <Fragment key={i}>
-                                {letterPricing && i === at && (
-                                  <p className="mt-4">{letterPricing}</p>
-                                )}
-                                <p className="mt-4">{p}</p>
-                              </Fragment>
+                            {letterParagraphsWithPricing(
+                              body,
+                              letterPricing,
+                              letterRoadmap
+                            ).map((p, i) => (
+                              <p className="mt-4" key={i}>
+                                {p}
+                              </p>
                             ))}
-                            {letterPricing && at >= body.length && (
-                              <p className="mt-4">{letterPricing}</p>
-                            )}
                           </>
                         );
                       })()
                     )}
                     {/* While the letter is in its Edit box the pricing
                         paragraph shows under it: it is not editable text. */}
+                    {editing === LETTER_LABEL && letterSec && letterRoadmap && (
+                      <p className="mt-4">{letterRoadmap}</p>
+                    )}
                     {editing === LETTER_LABEL && letterSec && letterPricing && (
                       <p className="mt-4">{letterPricing}</p>
                     )}
@@ -5431,6 +5543,26 @@ export function Workspace({
                       }
                     />
                   );
+                if (sheet.kind === "matrix-summary")
+                  return matrixSummary ? (
+                    <section className="rfpdoc-page" key="sheet-matrix-summary">
+                      <div className="rfpdoc-sechead">
+                        <div className="min-w-0">
+                          <div className="rfpdoc-kicker">{MATRIX_SUMMARY_KICKER}</div>
+                          <h3 className="rfpdoc-h mt-1">{MATRIX_SUMMARY_TITLE}</h3>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <MatrixSummarySheet
+                          tiles={matrixSummaryTiles(matrixSummary)}
+                          noLine={matrixNoLine(matrixSummary)}
+                          missingLine={matrixMissingLine(matrixSummary)}
+                          costIndex={matrixSummary.costIndex}
+                        />
+                      </div>
+                      <PageFoot who={coverClientName} />
+                    </section>
+                  ) : null;
                 if (sheet.kind === "pricing")
                   return (
                     <Fragment key="sec-__pricing">
@@ -5658,6 +5790,8 @@ export function Workspace({
                 const isEditing = editing === node.label;
                 const changed = highlights.has(node.label);
                 const blocks = blocksByLabel.get(node.label) ?? [];
+                // This section's matrix rows (§5.17.22), [] when it has none.
+                const matrixRows = sec ? (matrixByLabel.get(node.label) ?? []) : [];
                 // What "Add visual" can still offer here: one of each
                 // server-built set per section, the snapshot on one section
                 // in the whole document.
@@ -5699,7 +5833,9 @@ export function Workspace({
                   >
                     <div className="rfpdoc-sechead">
                       <div className="min-w-0">
-                        <div className="rfpdoc-kicker">{sheet.kicker}</div>
+                        <div className="rfpdoc-kicker">
+                          {matrixKicker(sheet.kicker, matrixRows)}
+                        </div>
                         <h3 className="rfpdoc-h mt-1">
                           {node.title}
                           {changed && <span className="doc-chip">Updated</span>}
@@ -5925,6 +6061,14 @@ export function Workspace({
                               </div>
                             </div>
                           )
+                        )}
+                        {/* The response matrix closes the section's flow,
+                            as resolve-draft lifts it (host-built from the
+                            stored answers, so it has no Remove). */}
+                        {matrixRows.length > 0 && (
+                          <div className="rfpdoc-block">
+                            <ResponseMatrix rows={matrixRows} />
+                          </div>
                         )}
                         {/* The section's footer tools, ONE panel: the cite
                             count and, when the draft left questions open,
@@ -6348,6 +6492,8 @@ function DocBlock({ block }: { block: DraftBlock }) {
           ))}
         </div>
       );
+    case "client-echo":
+      return <ClientEcho entries={block.entries} />;
     case "timeline":
       // Rows of up to four steps, as the files lay them (5 -> 4+1, 6 -> 4+2).
       return (
@@ -6368,6 +6514,258 @@ function DocBlock({ block }: { block: DraftBlock }) {
         </ol>
       );
   }
+}
+
+/* ---- Round 34 (§5.17.22): the questionnaire matrix and the client echo ---
+   One spec with both files (export.ts VIS.matrix / VIS.echo): the branded
+   table's navy head and zebra rows, pills in the reference register, the
+   callout chrome. globals.css is not touched: the pieces the branded
+   classes do not cover are set inline here, in the same px the files use. */
+
+/** Verdict pill colors (export.ts PILL): Yes navy filled, Partial navy
+ *  outlined, No ink filled, N/A faint outlined. */
+const PILL_STYLE: Record<string, CSSProperties> = {
+  yes: { background: "#2f31c5", color: "#ffffff", border: "1px solid #2f31c5" },
+  partial: { background: "#ffffff", color: "#2f31c5", border: "1px solid #2f31c5" },
+  no: { background: "#15163b", color: "#ffffff", border: "1px solid #15163b" },
+  na: { background: "#ffffff", color: "#5b5d78", border: "1px solid #8a8ca6" },
+};
+
+const capsStyle = (px: number, ls: number, color: string, weight = 600): CSSProperties => ({
+  fontFamily: "Archivo, var(--font-ui), sans-serif",
+  fontSize: `${px}px`,
+  fontWeight: weight,
+  letterSpacing: `${ls}em`,
+  textTransform: "uppercase",
+  color,
+  lineHeight: 1.4,
+});
+
+/** The matrix table: ID | pill | bold subject over the explanation, and the
+ *  system rate note under it when the row carries one. */
+function ResponseMatrix({ rows }: { rows: ResponseMatrixRow[] }) {
+  return (
+    <figure className="rfpdoc-figure">
+      <div className="rfpdoc-tablewrap">
+        <table style={{ minWidth: "440px" }}>
+          <colgroup>
+            {MATRIX_COLUMN_FRACTIONS.map((f, i) => (
+              <col key={i} style={{ width: `${(f * 100).toFixed(2)}%` }} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              {MATRIX_HEAD.map((h) => (
+                <th key={h} scope="col">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={`${row.ref}-${i}`}>
+                <th
+                  scope="row"
+                  style={{
+                    ...capsStyle(13, 0, "#15163b", 600),
+                    textTransform: "none",
+                    background: i % 2 === 1 ? "#f9fafd" : "#ffffff",
+                    borderBottom: "1px solid #e3e4ef",
+                    verticalAlign: "top",
+                  }}
+                >
+                  {row.ref}
+                </th>
+                <td style={{ verticalAlign: "top" }}>
+                  <span
+                    style={{
+                      ...capsStyle(9.5, 0.12, "#ffffff"),
+                      ...PILL_STYLE[row.verdict],
+                      display: "inline-block",
+                      borderRadius: "999px",
+                      padding: "2.5px 9px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {matrixVerdictLabel(row.verdict)}
+                  </span>
+                </td>
+                <td style={{ verticalAlign: "top", fontWeight: 400 }}>
+                  <div
+                    style={{
+                      fontFamily: "Archivo, var(--font-ui), sans-serif",
+                      fontWeight: 700,
+                      fontSize: "13.5px",
+                      lineHeight: 1.35,
+                      color: "#15163b",
+                      marginBottom: "3px",
+                    }}
+                  >
+                    {row.subject}
+                  </div>
+                  <div style={{ lineHeight: 1.55, color: "#31324c" }}>{row.explanation}</div>
+                  {row.rateNote && (
+                    <div style={{ marginTop: "8px" }}>
+                      <div style={capsStyle(9.5, 0.14, "#2f31c5")}>{MATRIX_RATE_LABEL}</div>
+                      <div
+                        style={{
+                          fontStyle: "italic",
+                          fontSize: "12.5px",
+                          lineHeight: 1.5,
+                          color: "#5b5d78",
+                          marginTop: "2px",
+                        }}
+                      >
+                        {row.rateNote}
+                      </div>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </figure>
+  );
+}
+
+/** The summary sheet's body, in the reference's order: the intro, the
+ *  added-cost index (a branded table through renderTable, as the files draw
+ *  it), then the caption, the tiles (the stat-tile chrome) and the no line. */
+function MatrixSummarySheet({
+  tiles,
+  noLine,
+  missingLine,
+  costIndex,
+}: {
+  tiles: ReturnType<typeof matrixSummaryTiles>;
+  noLine: string | null;
+  missingLine: string | null;
+  costIndex: { ref: string; rateNote: string }[];
+}) {
+  return (
+    <div className="space-y-3">
+      <p>{matrixSummaryIntro(costIndex.length)}</p>
+      {costIndex.length > 0 &&
+        renderTable({
+          kind: "table",
+          caption: MATRIX_COST_CAPTION,
+          columns: MATRIX_COST_HEAD.map((header) => ({ header, align: "left" as const })),
+          rows: costIndex.map((c) => [c.ref, c.rateNote]),
+          emphasizeLastRow: false,
+        })}
+      <div className="rfpdoc-tablecap">{MATRIX_SUMMARY_CAPTION}</div>
+      <ul
+        className="rfpdoc-tiles"
+        role="list"
+        style={
+          {
+            "--rfpdoc-tile-em": tileFitEm(tiles.map((t) => t.value)).toFixed(3),
+          } as CSSProperties
+        }
+      >
+        {tiles.map((t, i) => (
+          <li className="rfpdoc-tile" key={i}>
+            <div className="rfpdoc-tile-value">{t.value}</div>
+            <div className="rfpdoc-tile-label">{t.label}</div>
+          </li>
+        ))}
+      </ul>
+      {[noLine, missingLine].map((line, i) =>
+        line ? (
+          <p key={i} style={{ fontStyle: "italic", fontSize: "13px", lineHeight: 1.5, color: "#5b5d78" }}>
+            {line}
+          </p>
+        ) : null
+      )}
+    </div>
+  );
+}
+
+/** The client echo: per entry the numbered circle and "What you told us",
+ *  the client's line in italic (verbatim, in typographic quotes), its
+ *  attribution, the answer, and the callout chrome titled "What you will
+ *  see". The quote is a text node like every other string. */
+function ClientEcho({ entries }: { entries: ClientEchoEntry[] }) {
+  return (
+    <ol role="list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      {entries.map((e, i) => (
+        <li key={i} style={{ marginTop: i > 0 ? "28px" : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: "22px",
+                height: "22px",
+                borderRadius: "999px",
+                background: "#2f31c5",
+                color: "#ffffff",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontFamily: "Archivo, var(--font-ui), sans-serif",
+                fontWeight: 700,
+                fontSize: "11px",
+                flex: "none",
+              }}
+            >
+              {i + 1}
+            </span>
+            {/* With a sub-head the circle leads it (the reference's
+                numbered pain point) and "What you told us" sits over the
+                quote; without one the label leads, as before. */}
+            {e.title ? (
+              <span
+                style={{
+                  fontFamily: "Archivo, var(--font-ui), sans-serif",
+                  fontWeight: 700,
+                  fontSize: "15px",
+                  lineHeight: 1.3,
+                  color: "#15163b",
+                }}
+              >
+                {e.title}
+              </span>
+            ) : (
+              <span style={capsStyle(10, 0.16, "#2f31c5")}>{ECHO_TOLD_LABEL}</span>
+            )}
+          </div>
+          {e.title && (
+            <div style={{ ...capsStyle(10, 0.16, "#2f31c5"), marginTop: "8px" }}>{ECHO_TOLD_LABEL}</div>
+          )}
+          <blockquote
+            style={{
+              margin: "8px 0 0",
+              fontStyle: "italic",
+              fontSize: "16px",
+              lineHeight: 1.5,
+              color: "#15163b",
+            }}
+          >
+            {echoQuote(e.said)}
+          </blockquote>
+          {e.saidBy && (
+            <div style={{ ...capsStyle(9.5, 0.14, "#5b5d78", 500), marginTop: "6px" }}>
+              {e.saidBy}
+            </div>
+          )}
+          <div style={{ marginTop: "12px" }} className="space-y-3">
+            {echoParagraphs(e.answer).map((p, j) => (
+              <p key={j}>{p}</p>
+            ))}
+          </div>
+          {e.willSee && (
+            <div className="rfpdoc-callout" style={{ marginTop: "14px" }}>
+              <div className="rfpdoc-callout-title">{ECHO_SEE_TITLE}</div>
+              <p>{e.willSee}</p>
+            </div>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 /** The attended paths' notice when a write reports a refused table lift

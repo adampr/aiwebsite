@@ -403,3 +403,268 @@ export function outlineLabelFor(raw: string, kind: string): string {
   }
   return kind === "question" ? OUTLINE_QUESTIONS_LABEL : OUTLINE_DEFAULT_LABEL;
 }
+
+/* ---- Round 34: questionnaire sections (§5.17.22) --------------------------
+ * A real RFP whose items carry the client's own IDs ("OC-01") is answered as
+ * a response matrix, per SECTION. Everything here is pure and import-free
+ * like the rest of this module: the reader's grounding (brain.ts), the
+ * drafter, the generate route's landing, resolve-draft and the workspace
+ * all read the same predicate, so no surface can disagree about which
+ * sections are questionnaires. No stored flag: it is derived from the
+ * requirements on every read, so a re-read stays coherent. */
+
+/** The longest client item ID kept (sanitizeClientRef's shape: 1 + 15). */
+export const CLIENT_REF_MAX = 16;
+/** Distinct client refs on one structure node that make it a questionnaire
+ *  section (contract Q1a: ">= 3 requirements carry distinct clientRefs"). */
+export const QUESTIONNAIRE_MIN_REFS = 3;
+
+const CLIENT_REF_SHAPE = /^[A-Za-z0-9][A-Za-z0-9.\-]{0,15}$/;
+
+/**
+ * The reader's echoed `clientRef`, sanitized, or null. Trimmed, one run of
+ * trailing "." or ":" dropped ("OC-01." and "4.2:" are the ID with its
+ * punctuation), then kept only in the shape [A-Za-z0-9][A-Za-z0-9.-]{0,15}:
+ * no spaces, no brackets, nothing longer than CLIENT_REF_MAX. A single
+ * letter ("a", "B") is refused: a lettered sub-item is list furniture, not
+ * an item ID, and the token test cannot tell it from the article "a".
+ * Never repaired beyond that strip: anything else is no ref.
+ */
+export function sanitizeClientRef(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim().replace(/[.:]+$/, "");
+  if (!CLIENT_REF_SHAPE.test(t)) return null;
+  if (/^[A-Za-z]$/.test(t)) return null;
+  return t;
+}
+
+const isRefChar = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-9]/.test(c);
+
+/** `ref` inside `hay` as a whole token: no letter or digit glued to either
+ *  end, and no "." or "-" joining it to more of an ID ("OC-01" is not a
+ *  token of "OC-012" nor of "OC-01.2"). Hand-checked neighbours, never a
+ *  lookbehind. */
+function hasRefToken(hay: string, ref: string): boolean {
+  let at = hay.indexOf(ref);
+  while (at >= 0) {
+    const end = at + ref.length;
+    const before = hay[at - 1];
+    const after = hay[end];
+    const gluedBefore = isRefChar(before) || ((before === "." || before === "-") && isRefChar(hay[at - 2]));
+    const gluedAfter = isRefChar(after) || ((after === "." || after === "-") && isRefChar(hay[end + 1]));
+    if (!gluedBefore && !gluedAfter) return true;
+    at = hay.indexOf(ref, at + 1);
+  }
+  return false;
+}
+
+const collapseLine = (s: string): string => s.replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim();
+
+/** Curly quotes and apostrophes as their straight forms, one character for
+ *  one, so an index found in the folded text is an index in the original. A
+ *  reader that types "Alive's" against a source's "Alive’s" still grounds. */
+const foldQuotes = (s: string): string =>
+  s.replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'").replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"');
+
+/** How much of a requirement's opening anchors it to its source line. */
+const REF_ANCHOR_CHARS = 40;
+
+/** Text as the anchors compare it: whitespace collapsed, curly quotes
+ *  straight, case-folded. */
+export function foldAnchorText(s: string): string {
+  return foldQuotes(collapseLine(String(s ?? ""))).toLowerCase();
+}
+
+/** A requirement's anchor: its first REF_ANCHOR_CHARS characters as the
+ *  anchors compare them (groundClientRef's layout a, without a ref to strip;
+ *  brain.ts clientWordsFor selects source lines by it). */
+export function requirementAnchor(requirementText: string): string {
+  return foldAnchorText(requirementText).slice(0, REF_ANCHOR_CHARS);
+}
+/** The shortest wrapped first line that still anchors an item (layout b). */
+const REF_WRAP_MIN = 12;
+
+/** True when `ref` is the NEAREST ID-shaped token in `prefix` (the line up to
+ *  the item's text): the ref itself, or a token of the ref shape carrying a
+ *  digit. A bare number ("2 copies") counts only when the ref is a bare
+ *  number too, so a count in the item's own words never outbids "OC-01". On
+ *  a line a table flattened ("OC-01 Who owns. OC-02 Exit."), the second item
+ *  binds to OC-02, never to OC-01 further back. */
+function nearestIdIs(prefix: string, ref: string): boolean {
+  const bareRef = /^\d+$/.test(ref);
+  let last: string | null = null;
+  for (const m of prefix.matchAll(/[A-Za-z0-9][A-Za-z0-9.\-]*/g)) {
+    const tok = m[0].replace(/[.\-]+$/, "");
+    if (tok === ref) last = tok;
+    else if (CLIENT_REF_SHAPE.test(tok) && /\d/.test(tok) && (bareRef || !/^\d+$/.test(tok))) last = tok;
+  }
+  return last === ref;
+}
+
+/**
+ * The reader's `clientRef` claim (SELECT, never author; the round-32
+ * verbatim discipline). The sanitized ref is kept only when the source
+ * (each line whitespace-collapsed, curly quotes folded straight on both
+ * sides; the caller passes the fenced text with the intake headers
+ * stripped) ties it to the requirement in one of three layouts:
+ *   a. one line holds the requirement's opening words (its first
+ *      REF_ANCHOR_CHARS characters, case-folded, with the ref itself first
+ *      removed when the reader copied it into the text) AND, before them,
+ *      the ref as a whole token that is the NEAREST ID-shaped token to them
+ *      (a table row flattened onto one line binds each item to its own ID);
+ *   b. a wrapped column: the line's text right after the ref token is a
+ *      prefix of the requirement of at least REF_WRAP_MIN characters;
+ *   c. the ID on a line of its own, the next non-empty line opening with the
+ *      requirement's words (layout a's anchor, or layout b's prefix).
+ * An ID labels the item it leads, so a "P1" or "SLA" inside the
+ * requirement's own words is never mistaken for one. A ref equal to the
+ * requirement's section label is the section, not an item, and is refused.
+ * null on any miss.
+ */
+export function groundClientRef(
+  raw: unknown,
+  requirementText: string,
+  source: string,
+  structureLabel = ""
+): string | null {
+  const ref = sanitizeClientRef(raw);
+  if (ref === null || typeof requirementText !== "string" || typeof source !== "string") return null;
+  if (structureLabel && sanitizeClientRef(structureLabel) === ref) return null;
+  let text = foldQuotes(collapseLine(requirementText));
+  if (text.startsWith(ref) && !isRefChar(text[ref.length]) && !(text[ref.length] === "-" && isRefChar(text[ref.length + 1])))
+    text = text.slice(ref.length).replace(/^[\s.:)\]|-]+/, "");
+  const lowText = text.toLowerCase();
+  const anchor = lowText.slice(0, REF_ANCHOR_CHARS);
+  if (anchor.length < 3) return null;
+  /** The line opens the requirement: its anchor, or a wrapped prefix of it. */
+  const opens = (s: string): boolean => {
+    const low = s.toLowerCase();
+    return low.startsWith(anchor) || (low.length >= REF_WRAP_MIN && lowText.startsWith(low));
+  };
+  const lines = source.split(/\r?\n/).map((l) => foldQuotes(collapseLine(l)));
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line) continue;
+    // a. the anchor on this line, the ref the nearest ID before it.
+    const at = line.toLowerCase().indexOf(anchor);
+    if (at > 0 && hasRefToken(line.slice(0, at), ref) && nearestIdIs(line.slice(0, at), ref)) return ref;
+    // b. a wrapped first line: the text right after the ref token.
+    for (let k = line.indexOf(ref); k >= 0; k = line.indexOf(ref, k + 1)) {
+      const before = line[k - 1];
+      const after = line[k + ref.length];
+      if (isRefChar(before) || ((before === "." || before === "-") && isRefChar(line[k - 2]))) continue;
+      if (isRefChar(after) || ((after === "." || after === "-") && isRefChar(line[k + ref.length + 1]))) continue;
+      const tail = line.slice(k + ref.length).replace(/^[\s.:)\]|-]+/, "");
+      if (tail && opens(tail) && tail.length >= REF_WRAP_MIN) return ref;
+      // c. the ID alone on its line: the next non-empty line opens the item.
+      if (!tail && line.slice(0, k).replace(/[\s(\[]+/g, "") === "") {
+        const next = lines.slice(i + 1).find((l) => l !== "");
+        if (next !== undefined && opens(next)) return ref;
+      }
+    }
+  }
+  return null;
+}
+
+/** A requirement as the questionnaire predicate reads it. `clientRef` is
+ *  read loosely: a row stored before migration 0064 has none. */
+export type RefRequirementLike = {
+  structureLabel?: string | null;
+  clientRef?: unknown;
+  ordinal?: number;
+};
+
+/**
+ * The distinct client refs of one structure node in the CLIENT's order
+ * (ordinal ascending, ties in input order, each ref at its first
+ * appearance: a compound item split into several requirements shares one
+ * ref and is answered once). Every ref is re-sanitized, so a hostile stored
+ * value reads as none.
+ */
+export function questionnaireRefs(requirements: readonly RefRequirementLike[], label: string): string[] {
+  const rows = (Array.isArray(requirements) ? requirements : [])
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => !!r && r.structureLabel === label && sanitizeClientRef(r.clientRef) !== null);
+  rows.sort((a, b) => {
+    const ao = Number.isFinite(a.r.ordinal) ? (a.r.ordinal as number) : Number.MAX_SAFE_INTEGER;
+    const bo = Number.isFinite(b.r.ordinal) ? (b.r.ordinal as number) : Number.MAX_SAFE_INTEGER;
+    return ao - bo || a.i - b.i;
+  });
+  const out: string[] = [];
+  for (const { r } of rows) {
+    const ref = sanitizeClientRef(r.clientRef) as string;
+    if (!out.includes(ref)) out.push(ref);
+  }
+  return out;
+}
+
+/** THE questionnaire predicate: a structure node where at least
+ *  QUESTIONNAIRE_MIN_REFS requirements carry distinct client refs. Reserved
+ *  "__" labels (the letter) never qualify. */
+export function isQuestionnaireSection(requirements: readonly RefRequirementLike[], label: string): boolean {
+  if (typeof label !== "string" || label.startsWith("__")) return false;
+  return questionnaireRefs(requirements, label).length >= QUESTIONNAIRE_MIN_REFS;
+}
+
+/** A drafted answer's verdict: the matrix pill. */
+export const ANSWER_VERDICTS = ["yes", "partial", "no", "na"] as const;
+export type AnswerVerdict = (typeof ANSWER_VERDICTS)[number];
+export const ANSWER_SUBJECT_MAX = 60;
+export const ANSWER_EXPLANATION_MAX = 700;
+
+export function isAnswerVerdict(v: unknown): v is AnswerVerdict {
+  return typeof v === "string" && (ANSWER_VERDICTS as readonly string[]).includes(v);
+}
+
+/**
+ * One stored answer on a questionnaire section's record (the frozen seam:
+ * `answers: [{ref, verdict, subject, explanation, cites, rateCodes?}]`,
+ * ABSENT when there are none). Written only by the generate route's landing
+ * from brain.ts's screened drafter output; `rateCodes` are rate-card codes
+ * (never a figure), present only when non-empty.
+ */
+export type SectionAnswer = {
+  ref: string;
+  verdict: AnswerVerdict;
+  subject: string;
+  explanation: string;
+  cites: string[];
+  rateCodes?: string[];
+};
+
+/**
+ * Tolerant read of a stored `answers` array. Never throws. An entry is kept
+ * only in the stored shape (ref sanitized, verdict from the enum, subject and
+ * explanation non-empty strings within their limits, cites and rateCodes
+ * string arrays), each ref once (first wins); anything else is dropped.
+ */
+export function readSectionAnswers(raw: unknown): SectionAnswer[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SectionAnswer[] = [];
+  for (const a of raw.slice(0, 200)) {
+    try {
+      if (!a || typeof a !== "object" || Array.isArray(a)) continue;
+      const o = a as Record<string, unknown>;
+      const ref = sanitizeClientRef(o.ref);
+      if (ref === null || ref !== o.ref || out.some((x) => x.ref === ref)) continue;
+      if (!isAnswerVerdict(o.verdict)) continue;
+      if (typeof o.subject !== "string" || !o.subject.trim() || o.subject.length > ANSWER_SUBJECT_MAX) continue;
+      if (typeof o.explanation !== "string" || !o.explanation.trim() || o.explanation.length > ANSWER_EXPLANATION_MAX)
+        continue;
+      if (!Array.isArray(o.cites) || !o.cites.every((c) => typeof c === "string")) continue;
+      const codes = o.rateCodes;
+      if (codes !== undefined && (!Array.isArray(codes) || !codes.every((c) => typeof c === "string"))) continue;
+      out.push({
+        ref,
+        verdict: o.verdict,
+        subject: o.subject,
+        explanation: o.explanation,
+        cites: [...(o.cites as string[])],
+        ...(Array.isArray(codes) && codes.length ? { rateCodes: [...(codes as string[])] } : {}),
+      });
+    } catch {
+      // A getter that throws: a stored record must never take the page down.
+    }
+  }
+  return out;
+}

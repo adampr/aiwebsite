@@ -12,9 +12,10 @@ import crypto from "node:crypto";
 import { after } from "next/server";
 import {
   draftCoverLetter,
-  draftSection,
+  draftQuestionnaireChunked,
   brainHealthy,
   type DraftedSection,
+  type QuestionnaireAsk,
 } from "@/lib/rfp/brain";
 import { LETTER_LABEL, LETTER_TITLE, splitSections } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
@@ -25,6 +26,7 @@ import {
   completeGenerationRetitled,
   createProposal,
   currentKbVersion,
+  currentRateCard,
   genClaimActive,
   getDocument,
   getProposalForDocument,
@@ -48,10 +50,14 @@ import {
 } from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import {
+  isQuestionnaireSection,
   mayAdoptNarrativeTitle,
   outlineDefaultTitle,
+  sanitizeClientRef,
   serializePartsJson,
+  type SectionAnswer,
 } from "@/lib/rfp/outline";
+import { rateNoteCodes, toRateCard } from "@/lib/rfp/quote";
 import {
   liftMarkdownTables,
   type DraftBlock,
@@ -102,6 +108,13 @@ export type DraftSectionRecord = {
    *  without it, reads byte-identically; the closing sheet then keeps its
    *  standing copy. Written only by this route's letter landing. */
   thesis?: string;
+  /** A questionnaire section only (round 34, §5.17.22): the drafter's
+   *  answers, screened in brain.ts (screenQuestionnaireAnswers), one per
+   *  client ref in the client's order. ABSENT when there are none, so every
+   *  other record is byte-identical to round 33. Written only by this
+   *  route's landing; resolve-draft lifts them into the response-matrix
+   *  block, and the rate notes are composed there from the codes. */
+  answers?: SectionAnswer[];
 };
 
 export async function POST(
@@ -288,7 +301,7 @@ export async function POST(
       let sharedGround: GroundFact[] = [];
       let placeStructure: { label: string; title: string }[] = [];
       let placeRequirements: { structureLabel: string; text: string }[] = [];
-      let blockCounts = { about: 0, serviceStats: 0, trimmed: 0, landed: 0 };
+      let blockCounts = { about: 0, serviceStats: 0, sla: 0, trimmed: 0, landed: 0 };
       // Markdown tables in the drafted prose lifted into table blocks at the
       // landing (§5.17.19); the letter is never lifted.
       let liftedTables = 0;
@@ -363,6 +376,29 @@ export async function POST(
         const forSection = reqs
           .filter((r) => !label || r.structureLabel === label)
           .map((r) => r.text);
+        // Round 34 (§5.17.22): a section whose items carry 3+ distinct
+        // client IDs is answered as a questionnaire. The rate codes an
+        // answer may name come from the rate card in force (codes and
+        // labels only; the drafter never sees a price). A failed rate-card
+        // read costs the codes, never the draft.
+        let questionnaire: QuestionnaireAsk | undefined;
+        if (label && isQuestionnaireSection(reqs, label)) {
+          const view = await currentRateCard().catch((err) => {
+            console.error("[rfp] rate card read failed:", err);
+            return null;
+          });
+          const card = view ? toRateCard(view) : null;
+          const codes = rateNoteCodes(card);
+          questionnaire = {
+            items: reqs
+              .filter((r) => r.structureLabel === label)
+              .map((r) => ({ ref: sanitizeClientRef(r.clientRef), text: r.text })),
+            rateCodes: codes.map((code) => ({
+              code,
+              label: card?.items.find((i) => i.code === code)?.label ?? code,
+            })),
+          };
+        }
 
         // The user's own private knowledge is included for THEIR draft only,
         // mapped onto the fact shape with needs-adam confidence so the drafter
@@ -410,13 +446,23 @@ export async function POST(
         const ownOpenGaps =
           existing.find((s) => s.label === label)?.gaps.length ?? 0;
 
-        drafted = await draftSection(
+        // A questionnaire longer than one prompt's QUESTIONNAIRE_PROMPT_MAX
+        // refs is asked in SEQUENTIAL chunks whose screened answers merge
+        // (first wins) before the one CAS landing below; any other section
+        // is exactly one draftSection call (brain.ts draftQuestionnaireChunked).
+        drafted = await draftQuestionnaireChunked(
           proposalId,
           { label, title },
           forSection,
           asFacts,
           capOpenQuestionsForPrompt(openQuestions, ownOpenGaps),
-          briefText !== null ? { text: briefText } : undefined
+          briefText !== null ? { text: briefText } : undefined,
+          // Round 34: the source text grounds client-echo quotes (brief and
+          // real RFP alike); a questionnaire section is asked for answers.
+          {
+            echoSource: doc.rawText ?? "",
+            ...(questionnaire ? { questionnaire } : {}),
+          }
         );
         adoptTitle =
           drafted?.title &&
@@ -484,11 +530,13 @@ export async function POST(
                 requirements: placeRequirements,
                 sections,
                 sharedFacts: sharedGround,
+                paragraphs: drafted.paragraphs,
               });
           if (placed)
             blockCounts = {
               about: placed.about,
               serviceStats: placed.serviceStats,
+              sla: placed.sla,
               trimmed: placed.trimmed,
               landed: placed.blocks.length,
             };
@@ -609,6 +657,10 @@ export async function POST(
             updatedAt: new Date().toISOString(),
             ...(carry ? { referencesAnswered: true } : {}),
             ...(isLetter && letterThesis ? { thesis: letterThesis } : {}),
+            // Round 34: additive, absent when the drafter returned none.
+            ...(!isLetter && drafted.answers && drafted.answers.length
+              ? { answers: drafted.answers }
+              : {}),
           }, landedBlocks);
           landedGapCount = record.gaps.length;
           // Identity is LABEL alone, as everywhere else (workspace join,
@@ -683,6 +735,7 @@ export async function POST(
           blocks: blockCounts.landed,
           blocksAbout: blockCounts.about,
           blocksServiceStats: blockCounts.serviceStats,
+          blocksSla: blockCounts.sla,
           blocksTrimmed: blockCounts.trimmed,
           visualsReturned: drafted?.visualStats?.returned ?? 0,
           visualsDegraded: drafted?.visualStats?.degraded ?? 0,
@@ -693,6 +746,11 @@ export async function POST(
           // Round 32, present only when it happened: the section took the
           // drafter's narrative title (never the title itself here).
           ...(retitled ? { retitled: true } : {}),
+          // Round 34, a questionnaire section only: how many answers the
+          // screens kept and how many of its refs got none (counts only).
+          ...(drafted?.refsMissing !== undefined
+            ? { answers: drafted.answers?.length ?? 0, refsMissing: drafted.refsMissing }
+            : {}),
           // Round 33, letter of a brief only: how many part titles and deks
           // the turn composed and the screens kept (counts, never the text).
           ...(isLetter && landed && partsCounts

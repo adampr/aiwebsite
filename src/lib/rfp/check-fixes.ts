@@ -14,6 +14,30 @@
 
 import { DOC_LABEL, LETTER_LABEL } from "./letter";
 import type { Violation } from "./content-model/gate";
+// Client-safe by its own contract (pure, type-only imports, no lookbehind),
+// unlike the rules files beside it.
+import { clientRefOf, questionnaireLabels } from "./validators/matrix";
+
+/** A requirement as the recipes read it. `clientRef` (§5.17.22) is optional:
+ *  a caller that omits it gets every recipe exactly as before. */
+export type FixRequirement = {
+  id: string;
+  structureLabel: string;
+  clientRef?: unknown;
+};
+
+/** True when the requirement is a client item on a questionnaire-mode
+ *  section, so its C3 "not answered" is a missing response-matrix row. */
+function isMatrixGapRequirement(
+  requirementId: string | undefined,
+  label: string,
+  requirements: FixRequirement[]
+): boolean {
+  if (!requirementId) return false;
+  const req = requirements.find((r) => r.id === requirementId);
+  if (!req || req.structureLabel !== label || clientRefOf(req) === null) return false;
+  return questionnaireLabels(requirements).has(label);
+}
 
 /**
  * The section-id form resolve-draft.ts mints (its line ~157). The two MUST
@@ -300,6 +324,71 @@ const MAX_LISTED_EXCERPTS = 6;
 /** The bound on the person's own context inside one instruction. */
 const MAX_CONTEXT_CHARS = 800;
 
+/**
+ * What an order or verdict finding on the response matrix (rules D8, D9;
+ * §5.17.22) tells the person. The matrix is HOST-built from the section's
+ * stored answers in the client's order, so Tron (which revises paragraphs)
+ * cannot edit it and no Tron sweep is ever sent for it; a redraft rebuilds
+ * the answers, and a re-read rebuilds the client's item IDs and their order.
+ */
+export const MATRIX_FIX_MESSAGE =
+  "This is the response matrix, which the system builds from this section's stored answers in the client's order; Tron cannot edit it. Use Redraft on the section's sheet to rebuild it from a fresh draft.";
+
+/**
+ * A finding on a client-echo QUOTE or its attribution (§5.17.22): those are
+ * the client's own words, kept only when verbatim in the source, so no rule's
+ * recipe may hand them to Tron (a revise instruction would carry the quote
+ * into a prompt and invite a reworded "quote"). The person removes the entry.
+ */
+export const ECHO_QUOTE_FIX_MESSAGE =
+  "This is the client's own words, quoted verbatim from their document in a client-echo block, and a quote is never rewritten. If it should not appear in the response, remove that echo entry (or the whole block) from the section.";
+
+/** A client-echo quote's span fields as content-model blockTextSpans names
+ *  them. A matrix row is `rows[i].<field>`, so nothing else matches. */
+const ECHO_QUOTE_FIELD = /^entries\[\d+\]\.(said|saidBy)$/;
+
+/** True when a violation's locator points at a client-echo quote or its attribution. */
+export function isEchoQuoteLocator(loc: Violation["locator"]): boolean {
+  return typeof loc.field === "string" && ECHO_QUOTE_FIELD.test(loc.field);
+}
+
+/** Another rule's finding on a response-matrix row's text. */
+export const MATRIX_TEXT_FIX_MESSAGE =
+  "This text is in a response-matrix row, which the system builds from this section's stored answers; Tron cannot edit it. Redraft this section to rebuild its answers.";
+
+/** The matrix's own rules, whose recipes are their own (fixRecipe). */
+const MATRIX_RULES: ReadonlySet<string> = new Set(["D7", "D8", "D9"]);
+
+/** A matrix row's span fields as content-model blockTextSpans names them:
+ *  `rows[i].<field>`. A table cell is `rows[i][j]`, so nothing else matches. */
+const MATRIX_ROW_FIELD = /^rows\[\d+\]\.(?:ref|verdict|subject|explanation|rateNote)$/;
+
+/** A finding on the system furniture round 34 composes from the matrix. */
+export const MATRIX_FURNITURE_FIX_MESSAGE =
+  "This is system text the document composes on every build (the questionnaire summary, its added-cost index, or the cover letter's roadmap sentence); Tron cannot edit it. It follows the stored answers: redraft the section whose answers it reports.";
+
+/** The furniture spans resolvedTextSpans adds for the matrix (§5.17.22):
+ *  the summary under location "matrix-summary" and the letter's `roadmap`.
+ *  Both carry no sectionId and no blockId, which tells the summary's
+ *  `tiles[i].*` apart from a stat-tiles block's same-named fields. */
+const MATRIX_FURNITURE_FIELD =
+  /^(?:roadmap|noLine|tiles\[\d+\]\.(?:value|label)|costIndex\[\d+\]\.(?:ref|rateNote))$/;
+
+export function isMatrixFurnitureLocator(loc: Violation["locator"]): boolean {
+  return (
+    !loc.sectionId &&
+    !loc.blockId &&
+    !loc.requirementId &&
+    typeof loc.field === "string" &&
+    MATRIX_FURNITURE_FIELD.test(loc.field)
+  );
+}
+
+/** True when a violation's locator points at a response-matrix row's text. */
+export function isMatrixRowLocator(loc: Violation["locator"]): boolean {
+  return typeof loc.field === "string" && MATRIX_ROW_FIELD.test(loc.field);
+}
+
 /** Rules whose findings are plain prose defects a targeted Tron revision
  *  fixes, with no extra context worth asking for. */
 const PLAIN_TRON_RULES = new Set([
@@ -339,7 +428,7 @@ export function fixRecipe(
   v: Violation,
   ctx: {
     sections: { label: string }[];
-    requirements: { id: string; structureLabel: string }[];
+    requirements: FixRequirement[];
   }
 ): FixRecipe {
   // A finding on a reference card is never sent to the brain. The card's
@@ -353,6 +442,21 @@ export function fixRecipe(
   // Tron-editable, so never a Tron sweep either (the whole-document plan
   // flow would rewrite sections around a phrase it cannot reach).
   if (isPartSpanLocator(v.locator)) return { kind: "none", message: PART_FIX_MESSAGE };
+  // The client's verbatim words in a client-echo block (§5.17.22), for EVERY
+  // rule (an A-series phrase, D2's filler words, any phrase scan): a quote is
+  // never written into a Tron instruction.
+  if (isEchoQuoteLocator(v.locator)) return { kind: "none", message: ECHO_QUOTE_FIX_MESSAGE };
+  // Any other rule's finding inside a response-matrix row (a phrase scan on
+  // a subject or explanation, a figure in a rateNote; §5.17.22): the row is
+  // host-built from stored answers, Tron revises paragraphs, so a Tron run
+  // would never reach it and Fix all would loop. The matrix rules keep their
+  // own recipes below.
+  if (!MATRIX_RULES.has(v.ruleId) && isMatrixRowLocator(v.locator))
+    return { kind: "none", message: MATRIX_TEXT_FIX_MESSAGE };
+  // The questionnaire summary and the letter's roadmap sentence: system
+  // furniture recomposed on every resolve, never stored, never Tron-editable.
+  if (isMatrixFurnitureLocator(v.locator))
+    return { kind: "none", message: MATRIX_FURNITURE_FIX_MESSAGE };
 
   const resolved = resolveTargetLabel(v, ctx.sections, ctx.requirements);
   const tron = (ask?: { prompt: string }): FixRecipe => ({
@@ -407,6 +511,13 @@ export function fixRecipe(
           kind: "none",
           message: `Draft section ${label} first; this requirement is answered there.`,
         };
+      // A client item with no response-matrix row (§5.17.22: a drafted
+      // questionnaire-mode section counts it uncovered). Tron revises
+      // paragraphs and cannot add a matrix row; a redraft rebuilds the
+      // matrix, exactly D7's recipe. Needs the requirement's clientRef in
+      // ctx; without it (an older caller) this falls through unchanged.
+      if (isMatrixGapRequirement(v.locator.requirementId, label, ctx.requirements))
+        return { kind: "redraft", label, why: v.message };
       return {
         kind: "tron",
         label,
@@ -456,6 +567,26 @@ export function fixRecipe(
         : tron();
     case "D5":
       return tron();
+    case "D7": {
+      // Missing (or doubled, or foreign) response-matrix rows: the host
+      // rebuilds the matrix from a fresh draft of the section, so this is a
+      // redraft (auto in Fix all; a label the round already rebuilt is not
+      // redrafted again, fixAllSteps noRedraft). Nothing drafted to rebuild:
+      // the person drafts it first.
+      const label = resolved;
+      if (label !== null && ctx.sections.some((s) => s.label === label))
+        return { kind: "redraft", label, why: v.message };
+      return {
+        kind: "none",
+        message:
+          label !== null
+            ? `Draft section ${label} first; its response matrix is built from the draft.`
+            : MATRIX_FIX_MESSAGE,
+      };
+    }
+    case "D8":
+    case "D9":
+      return { kind: "none", message: MATRIX_FIX_MESSAGE };
     case "D6": {
       // Tabular text in prose (§5.17.19). A Tron revise, auto-fixable in
       // Fix all (not B7's figure-deletion class: nothing is removed). The
@@ -554,7 +685,7 @@ export type FixStep = FixRecipe;
 
 type FixCtx = {
   sections: { label: string }[];
-  requirements: { id: string; structureLabel: string }[];
+  requirements: FixRequirement[];
 };
 
 /**

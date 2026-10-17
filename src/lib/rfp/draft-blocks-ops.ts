@@ -20,6 +20,9 @@ import {
   buildAboutBlocks,
   buildOnboardingTimeline,
   buildServiceStatsBlock,
+  buildSlaTable,
+  isSlaMarkdown,
+  isSlaTable,
   parseModelVisuals,
   pickAboutSection,
   reanchorBlocks,
@@ -78,13 +81,17 @@ export function finishDraftVisuals(
   sectionCites: string[],
   // Round 32: a brief document's text, which a timeline step KICKER may also ground against
   // (parseModelVisuals kickerCorpus). Absent for a structured RFP: behaviour unchanged.
-  opts?: { kickerCorpus?: string }
+  // Round 34: the fenced source text a client-echo quote must be verbatim in (echoCorpus, brief
+  // and real RFP alike) and the server's injection screen. Absent: a client-echo drops.
+  opts?: { kickerCorpus?: string; echoCorpus?: string; tripsScreen?: (s: string) => boolean }
 ): { paragraphs: string[]; blocks: DraftBlock[]; stats: VisualStats } {
   const v = parseModelVisuals(rawVisuals, {
     facts,
     paragraphCount: paragraphs.length,
     sectionCites,
     ...(opts?.kickerCorpus ? { kickerCorpus: opts.kickerCorpus } : {}),
+    ...(opts?.echoCorpus ? { echoCorpus: opts.echoCorpus } : {}),
+    ...(opts?.tripsScreen ? { tripsScreen: opts.tripsScreen } : {}),
   });
   const next = [...paragraphs, ...v.degraded].slice(0, PARAGRAPH_CAP);
   return {
@@ -165,6 +172,12 @@ const tileKey = (v: string) => v.replace(/\s+/g, "").toLowerCase();
  * while no OTHER section holds that origin (a person who moved one keeps their choice). System
  * blocks take priority over the model's under LIMITS.blocksPerSection, and a model tile block
  * that only repeats the system tiles is dropped rather than shown twice.
+ *
+ * Round 34 (Q3): the service section also gets the system SLA table (buildSlaTable, origin
+ * "sla"), right after the tiles, under the same one-origin-one-section rule, and only when nothing
+ * the drafter produced already covers service levels: a model table that isSlaTable, or (when the
+ * caller passes the drafted `paragraphs`) a markdown SLA table the landing's lift will turn into
+ * one. A section that is not the service section is untouched.
  */
 export function landDraftBlocks(input: {
   label: string;
@@ -176,11 +189,14 @@ export function landDraftBlocks(input: {
   sections: StoredSection[];
   /** Live shared facts only: a private pending note never feeds a system block. */
   sharedFacts: GroundFact[];
-}): { blocks: DraftBlock[]; about: number; serviceStats: number; trimmed: number } {
+  /** The drafted paragraphs (round 34), read only for a markdown SLA table. */
+  paragraphs?: string[];
+}): { blocks: DraftBlock[]; about: number; serviceStats: number; sla: number; trimmed: number } {
   const { label, paragraphCount, sections, sharedFacts } = input;
   const system: DraftBlock[] = [];
   let about = 0;
   let serviceStats = 0;
+  let sla = 0;
 
   if (label && !label.startsWith("__")) {
     if (
@@ -201,6 +217,22 @@ export function landDraftBlocks(input: {
         serviceStats = 1;
       }
     }
+    const modelCoversSla =
+      (Array.isArray(input.modelBlocks) ? input.modelBlocks : []).some(isSlaTable) ||
+      (Array.isArray(input.paragraphs) ? input.paragraphs : []).some(
+        (p) => typeof p === "string" && isSlaMarkdown(p)
+      );
+    if (
+      !modelCoversSla &&
+      pickServiceStatsSection(input.structure, input.requirements) === label &&
+      !originHeldElsewhere(sections, label, "sla")
+    ) {
+      const table = buildSlaTable(sharedFacts);
+      if (table) {
+        system.push({ ...table, after: statsAnchor(paragraphCount) });
+        sla = 1;
+      }
+    }
   }
 
   const systemTiles = new Set(
@@ -216,7 +248,7 @@ export function landDraftBlocks(input: {
   );
   const all = [...system, ...model];
   const blocks = reanchorBlocks(all.slice(0, LIMITS.blocksPerSection), paragraphCount) ?? [];
-  return { blocks, about, serviceStats, trimmed: all.length - blocks.length };
+  return { blocks, about, serviceStats, sla, trimmed: all.length - blocks.length };
 }
 
 /**
@@ -241,7 +273,7 @@ export function withBlocks<T extends object>(
   return next;
 }
 
-export const VISUALS_ACTIONS = ["about", "service-stats", "onboarding", "remove"] as const;
+export const VISUALS_ACTIONS = ["about", "service-stats", "onboarding", "sla", "remove"] as const;
 export type VisualsAction = (typeof VISUALS_ACTIONS)[number];
 
 export function isVisualsAction(v: unknown): v is VisualsAction {
@@ -256,6 +288,7 @@ const ORIGIN_NAME: Record<NonNullable<DraftBlock["origin"]>, string> = {
   "service-stats": "service stats",
   onboarding: "onboarding timeline",
   references: "client references",
+  sla: "service level table",
 };
 
 export type VisualsOpResult<S> =
@@ -273,7 +306,7 @@ export type VisualsOpResult<S> =
 /**
  * The section route's "visuals" op, as a pure function of the stored sections and the live facts.
  *
- * "about" / "service-stats" / "onboarding" rebuild that set from the facts and REPLACE whatever
+ * "about" / "service-stats" / "onboarding" / "sla" rebuild that set from the facts and REPLACE whatever
  * this section holds of the same origin, keeping its position, so a second call is a refresh and
  * never a duplicate. The company snapshot lives on one section only. "remove" deletes one block
  * by id. Nothing else on the record moves: paragraphs, cites, generatedBy and gaps are untouched.
@@ -338,7 +371,8 @@ export function applyVisualsOp<S extends StoredSection>(
     }
     const tiles = origin === "service-stats" ? buildServiceStatsBlock(sharedFacts) : null;
     const timeline = origin === "onboarding" ? buildOnboardingTimeline(sharedFacts) : null;
-    const single = tiles ?? timeline;
+    const slaTable = origin === "sla" ? buildSlaTable(sharedFacts) : null;
+    const single = tiles ?? timeline ?? slaTable;
     const built: DraftBlock[] =
       origin === "about" ? buildAboutBlocks(sharedFacts) : single ? [single] : [];
     if (built.length === 0)

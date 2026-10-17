@@ -58,6 +58,10 @@ export type RfpExportAssets = {
     stepDots: [Buffer, Buffer, Buffer];
     /** The timeline connector: a hairline stripe that stretches sideways. */
     stepRule: Buffer;
+    /** The client echo's numbered circles 1..6 (§5.17.22): a 22px navy
+     *  disc with its white Archivo Bold numeral, at 4x. Word cannot draw a
+     *  numbered circle; the PDF and the screen draw it as a vector. */
+    echoNumbers: [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
   };
 };
 
@@ -115,6 +119,14 @@ export function loadRfpExportAssets(): RfpExportAssets {
         read("rfp-ornaments", "dot-ink.png"),
       ],
       stepRule: read("rfp-ornaments", "step-rule.png"),
+      echoNumbers: [
+        read("rfp-ornaments", "echo-1.png"),
+        read("rfp-ornaments", "echo-2.png"),
+        read("rfp-ornaments", "echo-3.png"),
+        read("rfp-ornaments", "echo-4.png"),
+        read("rfp-ornaments", "echo-5.png"),
+        read("rfp-ornaments", "echo-6.png"),
+      ],
     },
   };
   return cached;

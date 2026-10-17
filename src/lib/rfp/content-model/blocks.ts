@@ -131,6 +131,41 @@ export type BadgeStripBlock = BlockBase & {
   badges: { label: string; note?: string }[];
 };
 
+/**
+ * The questionnaire response matrix (§5.17.22): one row per client item ID, in the client's own
+ * order, each with a verdict pill, a short bold subject and the explanation. HOST-built, never
+ * model-authored as a block: resolve-draft lifts a questionnaire section's stored `answers` into
+ * ONE of these in requirement ordinal order (rule C4). `rateNote` is SYSTEM-composed at lift time
+ * from the answer's rate-card codes (quote.ts rateNoteFor), never model text.
+ */
+export type MatrixVerdict = "yes" | "partial" | "no" | "na";
+export type ResponseMatrixRow = {
+  ref: string;
+  verdict: MatrixVerdict;
+  subject: string;
+  explanation: string;
+  rateNote?: string;
+};
+export type ResponseMatrixBlock = BlockBase & {
+  kind: "response-matrix";
+  rows: ResponseMatrixRow[];
+};
+
+/**
+ * The client's own words, answered (§5.17.22): per entry a numbered circle, "What you told us"
+ * with the client's line quoted VERBATIM (`said`, kept only when it is a substring of the fenced
+ * source; `saidBy` only when it sits beside the quote there), XL.net's answer, and an optional
+ * "What you will see" callout. The only lane that prints client text as a quote: the §5.17.7
+ * testimonial pull-quote ban stands.
+ */
+/** `title` (optional, <= 60) is the entry's bold sub-head in XL.net's voice ("Too much customer
+ *  oversight"), screened at write like a matrix subject. */
+export type ClientEchoEntry = { title?: string; said: string; saidBy?: string; answer: string; willSee?: string };
+export type ClientEchoBlock = BlockBase & {
+  kind: "client-echo";
+  entries: ClientEchoEntry[];
+};
+
 export type Block =
   | ProseBlock
   | HeadingBlock
@@ -146,7 +181,9 @@ export type Block =
   | ImageBlock
   | PageBreakBlock
   | FootnoteBlock
-  | BadgeStripBlock;
+  | BadgeStripBlock
+  | ResponseMatrixBlock
+  | ClientEchoBlock;
 
 /**
  * The complete set of block kinds, as a runtime value.
@@ -171,6 +208,8 @@ export const BLOCK_KINDS = [
   "page-break",
   "footnote",
   "badge-strip",
+  "response-matrix",
+  "client-echo",
 ] as const satisfies readonly BlockKind[];
 
 /** Compile-time exhaustiveness guard for emitter and validator switches. */
@@ -251,8 +290,60 @@ export function blockTextSpans(block: Block): { field: string; text: string }[] 
         { field: `badges[${i}].label`, text: badge.label },
         ...(badge.note ? [{ field: `badges[${i}].note`, text: badge.note }] : []),
       ]);
+    // Round 34 (§5.17.22). Field names are the locator scheme the D-series
+    // rules and findingSig read: `rows[i].<field>` / `entries[i].<field>`,
+    // `i` the index in the stored array. The pill's printed word is
+    // `rows[i].verdict` (matrixVerdictLabel), a fixed vocabulary; `rateNote`
+    // is system text from the rate card (rule B7 sanctions it by field).
+    // Total over hostile stored shapes: a null or non-object row or entry,
+    // or a non-string field, yields no span for it rather than a throw
+    // (one throw here would turn every text rule into a validator error).
+    case "response-matrix":
+      return (Array.isArray(block.rows) ? block.rows : []).flatMap((row, i) => {
+        if (!row || typeof row !== "object") return [];
+        return [
+          ...spanIf(`rows[${i}].ref`, row.ref),
+          ...spanIf(`rows[${i}].verdict`, typeof row.verdict === "string" ? matrixVerdictLabel(row.verdict) : ""),
+          ...spanIf(`rows[${i}].subject`, row.subject),
+          ...spanIf(`rows[${i}].explanation`, row.explanation),
+          ...(row.rateNote ? spanIf(`rows[${i}].rateNote`, row.rateNote) : []),
+        ];
+      });
+    case "client-echo":
+      return (Array.isArray(block.entries) ? block.entries : []).flatMap((entry, i) => {
+        if (!entry || typeof entry !== "object") return [];
+        return [
+          ...(entry.title ? spanIf(`entries[${i}].title`, entry.title) : []),
+          ...spanIf(`entries[${i}].said`, entry.said),
+          ...(entry.saidBy ? spanIf(`entries[${i}].saidBy`, entry.saidBy) : []),
+          ...spanIf(`entries[${i}].answer`, entry.answer),
+          ...(entry.willSee ? spanIf(`entries[${i}].willSee`, entry.willSee) : []),
+        ];
+      });
     default:
       return assertNeverBlock(block);
+  }
+}
+
+/** One span when `text` is a string (a non-string stored value has none). */
+function spanIf(field: string, text: unknown): { field: string; text: string }[] {
+  return typeof text === "string" ? [{ field, text }] : [];
+}
+
+/** The word a verdict pill prints, on every surface. An unknown value (a
+ *  corrupt stored row, rule D9's case) prints nothing rather than a guess. */
+export function matrixVerdictLabel(verdict: string): string {
+  switch (verdict) {
+    case "yes":
+      return "Yes";
+    case "partial":
+      return "Partial";
+    case "no":
+      return "No";
+    case "na":
+      return "N/A";
+    default:
+      return "";
   }
 }
 

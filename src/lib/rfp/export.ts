@@ -55,6 +55,7 @@ import {
   TabStopType,
   TextRun,
   TextWrappingType,
+  ShadingType,
   VerticalAlign,
   VerticalPositionRelativeFrom,
   WidthType,
@@ -63,6 +64,7 @@ import JSZip from "jszip";
 import PDFDocument from "pdfkit";
 import {
   formatMoney,
+  matrixVerdictLabel,
   type Block,
   type PricingIllustration,
   type PricingQuote,
@@ -90,7 +92,22 @@ import { minimumSentence, quantityLabel } from "./quote";
 import {
   closingHeadline,
   coverLedeParts,
+  ECHO_SEE_TITLE,
+  ECHO_TOLD_LABEL,
+  echoParagraphs,
+  echoQuote,
   letterParagraphsWithPricing,
+  MATRIX_COLUMN_FRACTIONS,
+  MATRIX_CONTINUED,
+  MATRIX_COST_CAPTION,
+  MATRIX_COST_HEAD,
+  MATRIX_HEAD,
+  MATRIX_RATE_LABEL,
+  MATRIX_SUMMARY_CAPTION,
+  MATRIX_SUMMARY_KICKER,
+  MATRIX_SUMMARY_TITLE,
+  matrixSummaryIntro,
+  matrixKicker,
   pageFootLeft,
   partNumeral,
   submittedByLine,
@@ -114,8 +131,11 @@ const NAVY_RULE = "6365D4"; // 25% white over the navy field, precomposed
 const h = (c: string) => `#${c.toLowerCase()}`;
 
 /** A visual block as the emitters receive it: the content-model variant of
- *  one of the kinds a drafted section can store (draft-blocks.ts). */
-export type ExportVisual = Extract<Block, { kind: DraftBlockKind }>;
+ *  one of the kinds a drafted section can store (draft-blocks.ts), plus the
+ *  round-34 kinds (§5.17.22): the host-built response matrix and the client
+ *  echo, named here so the emitters handle them whatever DRAFT_BLOCK_KINDS
+ *  lists. */
+export type ExportVisual = Extract<Block, { kind: DraftBlockKind | "response-matrix" | "client-echo" }>;
 
 /** One section's body in reading order: THE ordering resolve-draft took from
  *  `interleave`, so screen, PDF and Word place every block identically. */
@@ -124,7 +144,9 @@ export type ExportFlowItem =
   | { type: "block"; block: ExportVisual };
 
 const isVisual = (b: Block): b is ExportVisual =>
-  (DRAFT_BLOCK_KINDS as readonly string[]).includes(b.kind);
+  (DRAFT_BLOCK_KINDS as readonly string[]).includes(b.kind) ||
+  b.kind === "response-matrix" ||
+  b.kind === "client-echo";
 
 export type ExportView = {
   coverTitle: string;
@@ -168,6 +190,8 @@ export type ExportView = {
     body: string[];
     /** The system pricing paragraph after the body (§5.17.20); null = none. */
     pricingParagraph: string | null;
+    /** The system roadmap sentence before it (§5.17.22); null = none. */
+    roadmap: string | null;
     closing: string;
     signature: {
       name: string;
@@ -182,8 +206,13 @@ export type ExportView = {
    *  pre-worded label verbatim) on a real RFP, the part-relative kicker the
    *  resolved parts carry ("Section 1.4") on a brief, so screen and file
    *  agree on the eyebrow. */
+  /** The questionnaire summary (§5.17.22) opening the sheet of the section
+   *  whose label it names; null = none (every document before round 34). */
+  matrixSummary: NonNullable<ResolvedProposal["matrixSummary"]> | null;
   sections: {
     label: string;
+    /** A questionnaire section's kicker carries its ID range (furniture.ts
+     *  matrixKicker, "Section 1 · OC-01 to OC-04"); every other is as before. */
     kicker: string;
     title: string;
     /** The section's prose alone, in order (what `flow` carries as "p"). */
@@ -243,12 +272,17 @@ export function buildExportView(
       salutation: resolved.letter.salutation,
       body: resolved.letter.body,
       pricingParagraph: resolved.letter.pricingParagraph ?? null,
+      roadmap: resolved.letter.roadmap ?? null,
       closing: resolved.letter.closing,
       signature: resolved.letter.signature,
     },
+    matrixSummary: resolved.matrixSummary ?? null,
     sections: resolved.sections.map((s) => ({
       label: s.structureLabel,
-      kicker: partKicker.get(s.structureLabel) ?? sectionKicker(s.structureLabel),
+      kicker: matrixKicker(
+        partKicker.get(s.structureLabel) ?? sectionKicker(s.structureLabel),
+        s.blocks.flatMap((b) => (b.kind === "response-matrix" ? b.rows : []))
+      ),
       title: s.title,
       paragraphs: s.blocks
         .filter((b) => b.kind === "prose")
@@ -417,7 +451,110 @@ const VIS = {
     bodyPx: 12.5, // serif, muted
     bodyLh: 1.5,
   },
+  // The questionnaire response matrix (§5.17.22): ID | pill | explanation,
+  // the branded table's navy head and zebra rows, columns at
+  // furniture.ts MATRIX_COLUMN_FRACTIONS.
+  matrix: {
+    padY: 12,
+    padX: 14,
+    idPx: 13, // Archivo SemiBold, ink
+    idLh: 1.35,
+    pillPx: 9.5, // Archivo SemiBold caps
+    pillLs: 0.12,
+    pillPadX: 9,
+    pillPadY: 3.5,
+    subjectPx: 13.5, // Archivo Bold, ink
+    subjectLh: 1.35,
+    subjectGap: 3,
+    bodyPx: 13.5, // serif, body
+    bodyLh: 1.55,
+    rateGap: 8,
+    ratePx: 9.5, // Archivo SemiBold caps, navy ("Added cost")
+    rateLs: 0.14,
+    rateLh: 1.4,
+    rateTextGap: 2,
+    rateTextPx: 12.5, // serif italic, muted
+    rateTextLh: 1.5,
+  },
+  // The client echo (§5.17.22): numbered circle + "What you told us", the
+  // client's line in italic, its attribution in caps, the answer at body
+  // size, then the callout chrome titled "What you will see".
+  echo: {
+    circle: 22,
+    circleGap: 10,
+    numPx: 11, // Archivo Bold, white
+    toldPx: 10, // Archivo SemiBold caps, navy
+    toldLs: 0.16,
+    toldLh: 1.4,
+    // An entry's optional sub-head (F10): Archivo Bold, ink, beside the
+    // circle; "What you told us" then sits over the quote.
+    titlePx: 15,
+    titleLh: 1.3,
+    toldGap: 8,
+    quoteGap: 8,
+    quotePx: 16, // serif italic, ink
+    quoteLh: 1.5,
+    byGap: 6,
+    byPx: 9.5, // Archivo Medium caps, muted
+    byLs: 0.14,
+    byLh: 1.4,
+    answerGap: 12,
+    answerPx: 15, // serif, body (the section paragraph size)
+    answerLh: 1.68,
+    paraGap: 10,
+    seeGap: 14,
+    entryGap: 28,
+  },
+  // The summary opening the first matrix section (§5.17.22).
+  summary: {
+    noGap: 10,
+    noPx: 13, // serif italic, muted
+    noLh: 1.5,
+  },
 } as const;
+
+/** Verdict pill colors, one spec for all three surfaces (the reference
+ *  register): Yes navy filled, Partial navy outlined, No ink filled, N/A
+ *  faint outlined. `fill` null = white field. */
+const PILL: Record<string, { fill: string | null; rule: string; text: string }> = {
+  yes: { fill: NAVY, rule: NAVY, text: "FFFFFF" },
+  partial: { fill: null, rule: NAVY, text: NAVY },
+  no: { fill: INK, rule: INK, text: "FFFFFF" },
+  na: { fill: null, rule: FAINT, text: MUTED },
+};
+const pillOf = (verdict: string) => PILL[verdict] ?? PILL.na!;
+
+/** The synthesized base fields for furniture drawn through a block emitter. */
+const FURNITURE_BASE = {
+  id: "furniture",
+  sectionId: "",
+  ordinal: 0,
+  cites: [] as string[],
+  generatedBy: "system" as const,
+  editedByHuman: false,
+};
+
+/** The summary furniture's two blocks, built ONCE for both emitters: the
+ *  three tiles and the added-cost index as a branded table. */
+function summaryBlocks(ms: NonNullable<ExportView["matrixSummary"]>): {
+  tiles: Extract<ExportVisual, { kind: "stat-tiles" }>;
+  index: Extract<ExportVisual, { kind: "table" }> | null;
+} {
+  return {
+    tiles: { ...FURNITURE_BASE, kind: "stat-tiles", tiles: ms.tiles },
+    index: ms.costIndex.length
+      ? {
+          ...FURNITURE_BASE,
+          kind: "table",
+          caption: MATRIX_COST_CAPTION,
+          columns: MATRIX_COST_HEAD.map((header) => ({ header, align: "left" as const })),
+          rows: ms.costIndex.map((c) => [c.ref, c.rateNote]),
+          emphasizeLastRow: false,
+        }
+      : null,
+  };
+}
+
 
 /** Badge mark / timeline dot colors, in asset order (export-assets). */
 const MARK_COLORS = [NAVY, BLUE, INK] as const;
@@ -809,7 +946,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     letterPar([serifRun(view.letter.salutation)], { before: 260, after: 200 }),
     // The drafted paragraphs with the system pricing paragraph placed by
     // furniture.ts (before the last drafted one), set exactly alike.
-    ...letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph).map((p) =>
+    ...letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph, view.letter.roadmap).map((p) =>
       letterPar([serifRun(p)], { after: 180 })
     ),
     letterPar([serifRun(view.letter.closing, { color: hex(SIGNATURE_COLORS.person) })], {
@@ -1483,11 +1620,211 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
           ),
         ];
       }
+      case "response-matrix": {
+        const M = VIS.matrix;
+        const widths = MATRIX_COLUMN_FRACTIONS.map((f) => Math.round(f * DXA_CONTENT));
+        widths[widths.length - 1] += DXA_CONTENT - widths.reduce((a, x) => a + x, 0);
+        const pad = {
+          top: px2tw(M.padY),
+          bottom: px2tw(M.padY),
+          left: px2tw(M.padX),
+          right: px2tw(M.padX),
+        };
+        // The pill: one run, shaded (Yes, No) or ruled (Partial, N/A), its
+        // padding non-breaking spaces inside the shading. Word has no
+        // rounded run, so the pill is square-cornered here.
+        const pill = (verdict: string) => {
+          const c = pillOf(verdict);
+          return new TextRun({
+            text: `\u00a0${matrixVerdictLabel(verdict).toUpperCase()}\u00a0`,
+            font: AR_SEMI,
+            size: px2hp(M.pillPx),
+            characterSpacing: ls2tw(M.pillLs, M.pillPx),
+            color: c.text,
+            ...(c.fill ? { shading: { type: ShadingType.CLEAR, fill: c.fill, color: "auto" } } : {}),
+            border: { style: BorderStyle.SINGLE, size: 6, color: c.rule, space: 1 },
+          });
+        };
+        return [
+          new Table({
+            width: { size: DXA_CONTENT, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            borders: NO_BORDERS,
+            columnWidths: widths,
+            rows: [
+              // The head row repeats on every page the matrix reaches; a row
+              // never splits (cantSplit), as the PDF's row-level split.
+              new TableRow({
+                tableHeader: true,
+                cantSplit: true,
+                children: MATRIX_HEAD.map((head, c) => tcell(head, { head: true, width: widths[c] })),
+              }),
+              ...b.rows.map((row, i) => {
+                const fill = i % 2 === 1 ? ZEBRA : undefined;
+                const borders = { bottom: hairB };
+                return new TableRow({
+                  cantSplit: true,
+                  children: [
+                    vCell(widths[0]!, [vPar([vRun(row.ref, AR_SEMI, M.idPx, INK)], { px: M.idPx, lh: M.idLh })], {
+                      fill,
+                      borders,
+                      margins: pad,
+                    }),
+                    vCell(
+                      widths[1]!,
+                      [
+                        new Paragraph({
+                          children: [pill(row.verdict)],
+                          spacing: { line: px2tw(M.idPx * M.idLh), lineRule: LineRuleType.AT_LEAST },
+                        }),
+                      ],
+                      { fill, borders, margins: pad }
+                    ),
+                    vCell(
+                      widths[2]!,
+                      [
+                        vPar([vRun(row.subject, AR_BOLD, M.subjectPx, INK, { bold: true })], {
+                          px: M.subjectPx,
+                          lh: M.subjectLh,
+                          after: M.subjectGap,
+                        }),
+                        vPar([vRun(row.explanation, SERIF, M.bodyPx, BODY)], { px: M.bodyPx, lh: M.bodyLh }),
+                        ...(row.rateNote
+                          ? [
+                              spacerX(px2tw(M.rateGap)),
+                              vPar([vCaps(MATRIX_RATE_LABEL, M.ratePx, M.rateLs, NAVY, AR_SEMI)], {
+                                px: M.ratePx,
+                                lh: M.rateLh,
+                                after: M.rateTextGap,
+                              }),
+                              vPar([vRun(row.rateNote, SERIF_ITAL, M.rateTextPx, MUTED, { italics: true })], {
+                                px: M.rateTextPx,
+                                lh: M.rateTextLh,
+                              }),
+                            ]
+                          : []),
+                      ],
+                      { fill, borders, margins: pad }
+                    ),
+                  ],
+                });
+              }),
+            ],
+          }),
+        ];
+      }
+      case "client-echo": {
+        const E = VIS.echo;
+        const out: (Paragraph | Table)[] = [];
+        const circleW = px2tw(E.circle + E.circleGap);
+        b.entries.forEach((entry, i) => {
+          if (i > 0) out.push(spacerX(px2tw(E.entryGap)));
+          out.push(
+            // The circle and the label as one borderless row, the label
+            // centered on the disc, kept with the quote under it.
+            vTable(
+              [circleW, DXA_CONTENT - circleW],
+              [
+                atomicRow([
+                  vCell(
+                    circleW,
+                    [
+                      new Paragraph({
+                        keepNext: true,
+                        children: [png(assets.images.echoNumbers[Math.min(i, 5)]!, E.circle, E.circle)],
+                        spacing: { line: px2tw(E.circle), lineRule: LineRuleType.AT_LEAST },
+                      }),
+                    ],
+                    { middle: true }
+                  ),
+                  vCell(
+                    DXA_CONTENT - circleW,
+                    [
+                      entry.title
+                        ? vPar([vRun(entry.title, AR_BOLD, E.titlePx, INK, { bold: true })], { px: E.titlePx, lh: E.titleLh, keepNext: true })
+                        : vPar([vCaps(ECHO_TOLD_LABEL, E.toldPx, E.toldLs, NAVY, AR_SEMI)], { px: E.toldPx, lh: E.toldLh, keepNext: true }),
+                    ],
+                    { middle: true }
+                  ),
+                ]),
+              ]
+            ),
+            ...(entry.title
+              ? [
+                  spacerX(px2tw(E.toldGap)),
+                  vPar([vCaps(ECHO_TOLD_LABEL, E.toldPx, E.toldLs, NAVY, AR_SEMI)], { px: E.toldPx, lh: E.toldLh, keepNext: true }),
+                ]
+              : []),
+            spacerX(px2tw(E.quoteGap)),
+            vPar([vRun(echoQuote(entry.said), SERIF_ITAL, E.quotePx, INK, { italics: true })], {
+              px: E.quotePx,
+              lh: E.quoteLh,
+              keepNext: true,
+            }),
+            ...(entry.saidBy
+              ? [
+                  spacerX(px2tw(E.byGap)),
+                  vPar([vCaps(entry.saidBy, E.byPx, E.byLs, MUTED)], { px: E.byPx, lh: E.byLh, keepNext: true }),
+                ]
+              : []),
+            spacerX(px2tw(E.answerGap)),
+            ...echoParagraphs(entry.answer).map((p, j, all) =>
+              vPar([vRun(p, SERIF, E.answerPx, BODY)], {
+                px: E.answerPx,
+                lh: E.answerLh,
+                after: j < all.length - 1 ? E.paraGap : 0,
+              })
+            ),
+            ...(entry.willSee
+              ? [
+                  spacerX(px2tw(E.seeGap)),
+                  ...visualDocx({
+                    ...FURNITURE_BASE,
+                    kind: "callout",
+                    title: ECHO_SEE_TITLE,
+                    body: entry.willSee,
+                    tone: "neutral",
+                  }),
+                ]
+              : [])
+          );
+        });
+        return out;
+      }
       default: {
         const unhandled: never = b;
         throw new Error(`Unhandled visual block: ${JSON.stringify(unhandled)}`);
       }
     }
+  };
+
+  /** The questionnaire summary (§5.17.22, F6): its OWN system sheet in the
+   *  reference's "How to Read This Response" register, house chrome (the
+   *  section head), placed directly before the first matrix section's sheet:
+   *  the intro, the added-cost index, then the caption, tiles and no line. */
+  const summarySheetDocx = (ms: NonNullable<ExportView["matrixSummary"]>) => {
+    const sb = summaryBlocks(ms);
+    secHead(MATRIX_SUMMARY_KICKER, MATRIX_SUMMARY_TITLE);
+    children.push(bodyPar(matrixSummaryIntro(ms.costIndex.length)));
+    if (sb.index) children.push(spacerX(px2tw(VIS.before)), ...visualDocx(sb.index), spacerX(px2tw(VIS.after)));
+    children.push(
+      vPar([vCaps(MATRIX_SUMMARY_CAPTION, VIS.table.captionPx, VIS.table.captionLs, NAVY, AR_SEMI)], {
+        px: VIS.table.captionPx,
+        lh: VIS.table.captionLh,
+        after: VIS.table.captionGap,
+        keepNext: true,
+      }),
+      ...visualDocx(sb.tiles)
+    );
+    for (const line of [ms.noLine, ms.missingLine])
+      if (line)
+        children.push(
+          spacerX(px2tw(VIS.summary.noGap)),
+          vPar([vRun(line, SERIF_ITAL, VIS.summary.noPx, MUTED, { italics: true })], {
+            px: VIS.summary.noPx,
+            lh: VIS.summary.noLh,
+          })
+        );
   };
 
   /** One section's body: prose as before, each visual with its own air. */
@@ -1502,6 +1839,13 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       }
       prev = item.type;
     }
+  };
+
+  /** One section sheet, the summary sheet first when it precedes this one. */
+  const sectionSheetDocx = (sec: ExportView["sections"][number]) => {
+    if (view.matrixSummary && view.matrixSummary.label === sec.label) summarySheetDocx(view.matrixSummary);
+    secHead(sec.kicker, sec.title);
+    sectionFlow(sec.flow);
   };
 
   // The Investment sheet: the engine's quote, printed, never calculated.
@@ -1658,22 +2002,19 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         const sec = view.sections.find((s) => s.label === label && !placed.has(s));
         if (!sec) continue;
         placed.add(sec);
-        secHead(sec.kicker, sec.title);
-        sectionFlow(sec.flow);
+        sectionSheetDocx(sec);
       }
     }
     // Defensive: the resolution places every label, so nothing lands here;
     // were one missed it still prints rather than vanishing.
     for (const sec of view.sections) {
       if (placed.has(sec)) continue;
-      secHead(sec.kicker, sec.title);
-      sectionFlow(sec.flow);
+      sectionSheetDocx(sec);
     }
   } else {
     dividerSheet(view.dividers[0]!, assets.images.num01);
     for (const sec of view.sections) {
-      secHead(sec.kicker, sec.title);
-      sectionFlow(sec.flow);
+      sectionSheetDocx(sec);
     }
     // Divider 02 announces the Investment part; with no quote there is no
     // part to announce, so both are omitted together (same rule as the PDF).
@@ -2199,7 +2540,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     doc.moveDown(0.8);
     // The drafted paragraphs with the system pricing paragraph placed by
     // furniture.ts (before the last drafted one), set the same way.
-    const letterParas = letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph);
+    const letterParas = letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph, view.letter.roadmap);
     for (const p of letterParas) {
       ensureRoom(40);
       flow(p, { px: 14, lh: 1.55, width: LW });
@@ -2547,7 +2888,9 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   };
   const G = pt(VIS.gap);
 
-  const visualPdf = (b: ExportVisual) => {
+  /** `sheetTitle` is the section's title: a response matrix that carries
+   *  onto a new page prints it there with "(continued)" (§5.17.22). */
+  const visualPdf = (b: ExportVisual, sheetTitle?: string) => {
     const x0 = PAGE.margin;
     switch (b.kind) {
       case "stat-tiles": {
@@ -2827,6 +3170,176 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
         });
         break;
       }
+      case "response-matrix": {
+        const M = VIS.matrix;
+        const cols = MATRIX_COLUMN_FRACTIONS.map((f) => f * CW);
+        const colX = [x0, x0 + cols[0]!, x0 + cols[0]! + cols[1]!];
+        const PX = pt(M.padX);
+        const PY = pt(M.padY);
+        const head = brandedTable(cols, ["left", "left", "left"], { stepDown: () => false });
+        const heads = [...MATRIX_HEAD];
+        const headM = head.measure(heads, { head: true });
+        const textW = cols[2]! - PX * 2;
+        // The pill's box: caps measured with their tracking (the trailing
+        // tracking dropped), padded, fully rounded.
+        const pillSpec = (verdict: string): TextSpec => ({
+          text: matrixVerdictLabel(verdict),
+          font: "Archivo-SemiBold",
+          px: M.pillPx,
+          lh: 1.15,
+          color: h(pillOf(verdict).text),
+          ls: M.pillLs,
+          upper: true,
+          oneLine: true,
+        });
+        const pillBox = (verdict: string) => {
+          const sp = pillSpec(verdict);
+          const { csp, str } = setSpec(sp);
+          const w = doc.widthOfString(str, { characterSpacing: csp }) - csp + pt(M.pillPadX) * 2;
+          return { sp, w, h: pt(M.pillPx) * 1.15 + pt(M.pillPadY) * 2 };
+        };
+        const specs = b.rows.map((row) => ({
+          id: { text: row.ref, font: "Archivo-SemiBold", px: M.idPx, lh: M.idLh, color: h(INK) } as TextSpec,
+          subject: { text: row.subject, font: "Archivo-Bold", px: M.subjectPx, lh: M.subjectLh, color: h(INK) } as TextSpec,
+          body: { text: row.explanation, font: "Serif", px: M.bodyPx, lh: M.bodyLh, color: h(BODY) } as TextSpec,
+          rateLabel: row.rateNote ? capsSpec(MATRIX_RATE_LABEL, M.ratePx, M.rateLs, h(NAVY), M.rateLh, "Archivo-SemiBold") : null,
+          rate: row.rateNote
+            ? ({ text: row.rateNote, font: "Serif-Italic", px: M.rateTextPx, lh: M.rateTextLh, color: h(MUTED) } as TextSpec)
+            : null,
+        }));
+        const rowH = specs.map((sp, i) => {
+          const pill = pillBox(b.rows[i]!.verdict);
+          const third =
+            textH(sp.subject, textW) +
+            pt(M.subjectGap) +
+            textH(sp.body, textW) +
+            (sp.rateLabel && sp.rate
+              ? pt(M.rateGap) + textH(sp.rateLabel, textW) + pt(M.rateTextGap) + textH(sp.rate, textW)
+              : 0);
+          return PY * 2 + Math.max(textH(sp.id, cols[0]! - PX * 2), pill.h, third);
+        });
+        // The head never strands: it starts with the first row or not at all.
+        ensureRoom(headM.rowH + (rowH[0] ?? 0));
+        head.paint(heads, { head: true }, headM);
+        b.rows.forEach((row, i) => {
+          if (doc.y + rowH[i]! > FOOT_LIMIT) {
+            // A row never splits. The new page carries the sheet's title with
+            // "(continued)" and the head row again (the stamping pass adds
+            // the quiet "<kicker> · continued" above it, as on any sheet).
+            doc.addPage();
+            doc.x = PAGE.margin;
+            doc.y = PAGE.margin + pt(11) + pt(6);
+            if (sheetTitle) {
+              doc.font("Archivo-Bold").fontSize(pt(28)).fillColor(h(INK));
+              doc.text(`${sheetTitle} ${MATRIX_CONTINUED}`, {
+                width: CW,
+                lineGap: Math.max(0, pt(28) * 1.2 - doc.currentLineHeight()),
+              });
+              doc.moveDown(0.55);
+            }
+            head.paint(heads, { head: true }, headM);
+          }
+          const y = doc.y;
+          const sp = specs[i]!;
+          if (i % 2 === 1) doc.rect(x0, y, CW, rowH[i]!).fill(h(ZEBRA));
+          textAt(sp.id, colX[0]! + PX, y + PY, cols[0]! - PX * 2);
+          // The pill sits on the ID's first line.
+          const pill = pillBox(row.verdict);
+          const c = pillOf(row.verdict);
+          const py = y + PY + (pt(M.idPx) * M.idLh - pill.h) / 2;
+          if (c.fill) doc.roundedRect(colX[1]! + PX, py, pill.w, pill.h, pill.h / 2).fill(h(c.fill));
+          else
+            doc
+              .roundedRect(colX[1]! + PX + 0.5, py + 0.5, pill.w - 1, pill.h - 1, (pill.h - 1) / 2)
+              .lineWidth(1)
+              .strokeColor(h(c.rule))
+              .stroke();
+          textAt(pill.sp, colX[1]! + PX + pt(M.pillPadX), py + pt(M.pillPadY), pill.w);
+          let ty = y + PY;
+          textAt(sp.subject, colX[2]! + PX, ty, textW);
+          ty += textH(sp.subject, textW) + pt(M.subjectGap);
+          textAt(sp.body, colX[2]! + PX, ty, textW);
+          if (sp.rateLabel && sp.rate) {
+            ty += textH(sp.body, textW) + pt(M.rateGap);
+            textAt(sp.rateLabel, colX[2]! + PX, ty, textW);
+            ty += textH(sp.rateLabel, textW) + pt(M.rateTextGap);
+            textAt(sp.rate, colX[2]! + PX, ty, textW);
+          }
+          doc.x = PAGE.margin;
+          doc.y = y + rowH[i]!;
+          hairline(PAGE.margin, doc.y, PAGE.margin + CW);
+        });
+        break;
+      }
+      case "client-echo": {
+        const E = VIS.echo;
+        const r = pt(E.circle) / 2;
+        const told = capsSpec(ECHO_TOLD_LABEL, E.toldPx, E.toldLs, h(NAVY), E.toldLh, "Archivo-SemiBold");
+        const toldX = x0 + pt(E.circle) + pt(E.circleGap);
+        b.entries.forEach((entry, i) => {
+          const quote: TextSpec = { text: echoQuote(entry.said), font: "Serif-Italic", px: E.quotePx, lh: E.quoteLh, color: h(INK) };
+          const by = entry.saidBy ? capsSpec(entry.saidBy, E.byPx, E.byLs, h(MUTED), E.byLh) : null;
+          const paras = echoParagraphs(entry.answer).map(
+            (text) => ({ text, font: "Serif", px: E.answerPx, lh: E.answerLh, color: h(BODY) }) as TextSpec
+          );
+          // F10: a sub-head beside the circle, "What you told us" over the quote.
+          const titleW = CW - (toldX - x0);
+          const title: TextSpec | null = entry.title
+            ? { text: entry.title, font: "Archivo-Bold", px: E.titlePx, lh: E.titleLh, color: h(INK) }
+            : null;
+          const rowH = title ? Math.max(pt(E.circle), textH(title, titleW)) : pt(E.circle);
+          const toldH = title ? pt(E.toldGap) + textH(told, CW) : 0;
+          const headH = rowH + toldH + pt(E.quoteGap) + textH(quote, CW) + (by ? pt(E.byGap) + textH(by, CW) : 0);
+          const parasH = paras.reduce((a, p, j) => a + textH(p, CW) + (j < paras.length - 1 ? pt(E.paraGap) : 0), 0);
+          // Whole when it fits a page; otherwise the head and the quote stay
+          // together and the answer flows on, a paragraph at a time.
+          const firstH = headH + pt(E.answerGap) + (paras[0] ? textH(paras[0], CW) : 0);
+          if (i > 0) doc.y += pt(E.entryGap);
+          ensureRoom(headH + pt(E.answerGap) + parasH <= FOOT_LIMIT - PAGE.margin ? headH + pt(E.answerGap) + parasH : firstH);
+          let y = doc.y;
+          doc.circle(x0 + r, y + r, r).fill(h(NAVY));
+          textAt(
+            { text: String(i + 1), font: "Archivo-Bold", px: E.numPx, lh: 1.2, color: "#ffffff", align: "center" },
+            x0,
+            y + r - (pt(E.numPx) * 1.2) / 2 + 0.5,
+            pt(E.circle)
+          );
+          if (title) {
+            const th = textH(title, titleW);
+            textAt(title, toldX, th <= pt(E.circle) ? y + r - th / 2 : y, titleW);
+            y += rowH + pt(E.toldGap);
+            textAt(told, x0, y, CW);
+            y += textH(told, CW) + pt(E.quoteGap);
+          } else {
+            textAt(told, toldX, y + r - textH(told, CW) / 2, CW - (toldX - x0));
+            y += pt(E.circle) + pt(E.quoteGap);
+          }
+          textAt(quote, x0, y, CW);
+          y += textH(quote, CW);
+          if (by) {
+            y += pt(E.byGap);
+            textAt(by, x0, y, CW);
+            y += textH(by, CW);
+          }
+          y += pt(E.answerGap);
+          doc.y = y;
+          paras.forEach((p, j) => {
+            const ph = textH(p, CW);
+            ensureRoom(ph);
+            // Captured BEFORE drawing: textAt leaves doc.y at the end of
+            // what it set (the round-32 timeline lesson).
+            const py = doc.y;
+            textAt(p, x0, py, CW);
+            doc.y = py + ph + (j < paras.length - 1 ? pt(E.paraGap) : 0);
+          });
+          doc.x = PAGE.margin;
+          if (entry.willSee) {
+            doc.y += pt(E.seeGap);
+            visualPdf({ ...FURNITURE_BASE, kind: "callout", title: ECHO_SEE_TITLE, body: entry.willSee, tone: "neutral" });
+          }
+        });
+        break;
+      }
       default: {
         const unhandled: never = b;
         throw new Error(`Unhandled visual block: ${JSON.stringify(unhandled)}`);
@@ -2836,9 +3349,45 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     doc.x = PAGE.margin;
   };
 
+  /** The questionnaire summary's own system sheet (§5.17.22, F6), before
+   *  the first matrix section's sheet: the house section head, the intro,
+   *  the added-cost index, then the caption, tiles and no line. */
+  const summarySheetPdf = (ms: NonNullable<ExportView["matrixSummary"]>) => {
+    const sb = summaryBlocks(ms);
+    beginSheet(MATRIX_SUMMARY_KICKER);
+    secHead(MATRIX_SUMMARY_KICKER, MATRIX_SUMMARY_TITLE);
+    ensureRoom(40);
+    flow(matrixSummaryIntro(ms.costIndex.length), { px: 15, lh: 1.68 });
+    doc.moveDown(0.65);
+    if (sb.index) {
+      doc.y += pt(VIS.before);
+      visualPdf(sb.index);
+      doc.y += pt(VIS.after);
+    }
+    const cap = capsSpec(MATRIX_SUMMARY_CAPTION, VIS.table.captionPx, VIS.table.captionLs, h(NAVY), VIS.table.captionLh, "Archivo-SemiBold");
+    ensureRoom(textH(cap, CW) + pt(VIS.table.captionGap) + 90);
+    // Each y captured before drawing: textAt leaves doc.y past its text.
+    const capY = doc.y;
+    textAt(cap, PAGE.margin, capY, CW);
+    doc.y = capY + textH(cap, CW) + pt(VIS.table.captionGap);
+    visualPdf(sb.tiles);
+    for (const line of [ms.noLine, ms.missingLine]) {
+      if (!line) continue;
+      const no: TextSpec = { text: line, font: "Serif-Italic", px: VIS.summary.noPx, lh: VIS.summary.noLh, color: h(MUTED) };
+      doc.y += pt(VIS.summary.noGap);
+      ensureRoom(textH(no, CW));
+      const noY = doc.y;
+      textAt(no, PAGE.margin, noY, CW);
+      doc.y = noY + textH(no, CW);
+    }
+    doc.x = PAGE.margin;
+  };
+
   /** One section sheet; its overflow pages carry "<kicker> · continued"
    *  ("SECTION 1.4 · CONTINUED" on a brief, §5.17.21). */
   const sectionSheet = (sec: ExportView["sections"][number]) => {
+    // The questionnaire summary (§5.17.22, F6) is its own sheet, first.
+    if (view.matrixSummary && view.matrixSummary.label === sec.label) summarySheetPdf(view.matrixSummary);
     beginSheet(sec.kicker);
     secHead(sec.kicker, sec.title);
     let prev: "head" | "p" | "block" = "head";
@@ -2849,7 +3398,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
         doc.moveDown(0.65);
       } else {
         if (prev === "p") doc.y += pt(VIS.before);
-        visualPdf(item.block);
+        visualPdf(item.block, sec.title);
         doc.y += pt(VIS.after);
       }
       prev = item.type;

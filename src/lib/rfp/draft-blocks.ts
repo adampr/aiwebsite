@@ -50,6 +50,9 @@ export type DraftBlockBody =
   | Body<"callout">
   | Body<"cards">
   | Body<"timeline">
+  // Round 34 (§5.17.22): the client's own words, answered. Model-authored
+  // through parseModelVisuals only, every quote verbatim in the fenced source.
+  | Body<"client-echo">
   // Client references (references-block.ts): stored as entries, drawn as one
   // branded table per reference. Not a content-model kind of its own: the
   // lift (resolve-draft.ts) turns it into `table` blocks.
@@ -65,7 +68,7 @@ export type DraftBlock = DraftBlockBody & {
   cites: string[];
   /** Set by the server path that built the block, never taken from a request body. */
   generatedBy: "llm" | "system";
-  origin?: "about" | "service-stats" | "onboarding" | "references";
+  origin?: "about" | "service-stats" | "onboarding" | "references" | "sla";
 };
 
 export const LIMITS = {
@@ -86,6 +89,20 @@ export const LIMITS = {
   ledger: [2, 12],
   // A model timeline step's kicker: a date or date range, or "Step N".
   timelineKicker: 24,
+} as const;
+
+/** Round 34 (§5.17.22): a client-echo block's entry count and field limits, and how far from its
+ *  quote (in the collapsed source) an attribution may sit. Kept out of LIMITS, the frozen shape. */
+export const ECHO_LIMITS = {
+  entries: [1, 6],
+  said: 300,
+  saidMin: 12,
+  saidBy: 60,
+  /** An entry's optional bold sub-head (XL.net voice, the matrix subject's screen). */
+  title: 60,
+  answer: 700,
+  willSee: 200,
+  saidByWindow: 120,
 } as const;
 
 /** The drafter's paragraph cap (brain.ts slices every draft to this); degraded prose fits inside it. */
@@ -487,6 +504,30 @@ function readBody(raw: Record<string, unknown>): DraftBlockBody | null {
       const references = readReferenceEntries(raw.references);
       return references ? { kind: "references", references } : null;
     }
+    case "client-echo": {
+      // The stored shape only; the verbatim grounding is the WRITE contract (parseModelVisuals),
+      // since the source text is not at hand on a read.
+      if (!Array.isArray(raw.entries) || !inRange(raw.entries.length, ECHO_LIMITS.entries)) return null;
+      const entries: Body<"client-echo">["entries"] = [];
+      for (const e of raw.entries) {
+        if (!isObj(e)) return null;
+        const title = optStr(e.title, ECHO_LIMITS.title);
+        const said = str(e.said, ECHO_LIMITS.said);
+        const saidBy = optStr(e.saidBy, ECHO_LIMITS.saidBy);
+        const answer = str(e.answer, ECHO_LIMITS.answer);
+        const willSee = optStr(e.willSee, ECHO_LIMITS.willSee);
+        if (title === null || said === null || saidBy === null || answer === null || willSee === null)
+          return null;
+        entries.push({
+          ...(title !== undefined ? { title } : {}),
+          said,
+          ...(saidBy !== undefined ? { saidBy } : {}),
+          answer,
+          ...(willSee !== undefined ? { willSee } : {}),
+        });
+      }
+      return { kind: "client-echo", entries };
+    }
     default:
       return null;
   }
@@ -511,6 +552,8 @@ function bodyStrings(b: DraftBlockBody): string[] {
       return b.steps.flatMap((s) => [s.label, s.title, s.body]);
     case "references":
       return referencesBlockStrings(b.references);
+    case "client-echo":
+      return b.entries.flatMap((e) => [e.title ?? "", e.said, e.saidBy ?? "", e.answer, e.willSee ?? ""]);
   }
 }
 
@@ -543,7 +586,8 @@ export function sanitizeStoredBlocks(raw: unknown, paragraphCount: number): Draf
         origin !== "about" &&
         origin !== "service-stats" &&
         origin !== "onboarding" &&
-        origin !== "references"
+        origin !== "references" &&
+        origin !== "sla"
       )
         continue;
       const body = readBody(item);
@@ -874,6 +918,182 @@ function parseTimeline(
   };
 }
 
+/** Rule D1 for the echo lane: an em dash (or the horizontal bar) REFUSES the value; it is never
+ *  replaced, because a replaced quote is no longer the client's words. */
+const ECHO_EM_DASH = /[\u2014\u2015]/;
+/** Stacked combining marks (zalgo): furniture.ts hasStackedMarks's test, local so this module keeps
+ *  its two value imports. */
+const STACKED_MARKS = /\p{Mn}{2,}/u;
+
+/**
+ * Echo-lane text: normalized (normText), whitespace collapsed, and REFUSED (null) when it is not a
+ * string, is empty, runs over `max`, or carries an em dash, a fence-token run of angle brackets,
+ * stacked combining marks or a non-ASCII numeral. Never cut and never repaired.
+ */
+function echoText(v: unknown, max: number): string | null {
+  if (typeof v !== "string" || v.length > max * 4 + 200) return null;
+  const s = normText(v).replace(/\s+/g, " ").trim();
+  if (!s || s.length > max) return null;
+  if (ECHO_EM_DASH.test(s) || /<{3,}|>{3,}/.test(s) || FOREIGN_NUMERAL.test(s)) return null;
+  if (STACKED_MARKS.test(s.normalize("NFC"))) return null;
+  return s;
+}
+
+/** A letter or digit: what may not be glued to either end of a whole-word match. */
+const glued = (c: string | undefined): boolean => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+
+/** Every index where `needle` sits inside `hay` with no letter or digit glued to either end. */
+function wordOccurrences(hay: string, needle: string): number[] {
+  const out: number[] = [];
+  if (!needle) return out;
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + 1))
+    if (!glued(hay[at - 1]) && !glued(hay[at + needle.length])) out.push(at);
+  return out;
+}
+
+/** `needle` inside `hay` with no letter or digit glued to either end. */
+function containsWords(hay: string, needle: string): boolean {
+  return wordOccurrences(hay, needle).length > 0;
+}
+
+/** `s` opens with `word` as a whole word. */
+const opensWith = (s: string, word: string): boolean => s.startsWith(word) && !glued(s[word.length]);
+
+/**
+ * The echo corpus as the grounding reads it. `flat` is the text every quote is matched in (the
+ * same normText + whitespace collapse every quote passes); `lines` is each non-empty source line's
+ * [start, end) inside `flat`, so an attribution can be held to the quote's own line.
+ */
+type EchoIndex = { flat: string; lines: [number, number][] };
+
+function echoIndexOf(text: string): EchoIndex {
+  const lines: [number, number][] = [];
+  let flat = "";
+  for (const raw of normText(String(text ?? "")).split(/\r\n?|[\n\u2028\u2029]/)) {
+    const line = raw.replace(/\s+/g, " ").trim();
+    if (!line) continue;
+    if (flat) flat += " ";
+    lines.push([flat.length, flat.length + line.length]);
+    flat += line;
+  }
+  return { flat, lines };
+}
+
+/** The echo corpus as the grounding compares it: the same normText + collapse every quote passes. */
+export function collapseEchoCorpus(text: string): string {
+  return echoIndexOf(text).flat;
+}
+
+/**
+ * Whether `by` attributes the quote at [at, end) of the corpus (round 34). Either it sits, as whole
+ * words, on a source line the quote itself touches and within ECHO_LIMITS.saidByWindow characters
+ * of it; or it is set in an attribution pattern right beside the quote, across a line break:
+ * "Name: <quote>" (a title may follow the name, "Name, Title: <quote>"), "<quote> (Name ...)" or
+ * "<quote> \u2014 Name" (an em or en dash, "--" or "~"; a lone hyphen is a bullet, not an
+ * attribution). A name that is merely nearby (a contact line above a complaint) attributes nothing.
+ */
+function attributes(ix: EchoIndex, at: number, end: number, by: string): boolean {
+  const W = ECHO_LIMITS.saidByWindow;
+  const { flat } = ix;
+  const touched = ix.lines.filter(([s, e]) => s < end && e > at);
+  if (touched.length) {
+    const lineStart = touched[0]![0];
+    const lineEnd = touched[touched.length - 1]![1];
+    if (containsWords(flat.slice(Math.max(lineStart, at - W), at), by)) return true;
+    if (containsWords(flat.slice(end, Math.min(lineEnd, end + W)), by)) return true;
+  }
+  const after = flat.slice(end, end + W);
+  const rest = after.slice(/^[\s"'\u201D\u2019)\].,;!?]*/.exec(after)![0].length);
+  const dash = /^(?:[\u2013\u2014\u2015~]+|-{2,})\s*/.exec(rest);
+  if (dash && opensWith(rest.slice(dash[0].length), by)) return true;
+  const paren = /^\(\s*/.exec(rest);
+  if (paren) {
+    const inner = rest.slice(paren[0].length);
+    if (opensWith(inner, by) && /^[^()]*\)/.test(inner.slice(by.length))) return true;
+  }
+  const before = flat.slice(Math.max(0, at - W), at);
+  for (const i of wordOccurrences(before, by))
+    if (/^(?:,[^:,]{1,60})?\s*:\s*["'\u201C\u2018(]?\s*$/.test(before.slice(i + by.length))) return true;
+  return false;
+}
+
+/**
+ * A model `client-echo` (round 34, §5.17.22): {entries: [{title?, said, saidBy?, answer,
+ * willSee?}]}, the client's own words answered. Every rule blocks PER ENTRY:
+ *   said     the client's line, kept only when its collapsed form is a SUBSTRING of the collapsed
+ *            echo corpus (the fenced source text, intake headers stripped) on WORD BOUNDARIES: no
+ *            letter or digit glued to either end, so "happy with" cut out of "unhappy with" is no
+ *            quote. One character off is no quote: the entry drops. At least
+ *            ECHO_LIMITS.saidMin characters, at most 300.
+ *   saidBy   kept only when it attributes an occurrence of the quote (attributes(): on the
+ *            quote's own source line within 120 characters, or in a "Name:", "(Name)" or dash
+ *            attribution right beside it); otherwise dropped, the entry kept.
+ *   title    optional bold sub-head (<= 60), XL.net's voice, screened as a matrix subject is;
+ *            one that fails drops the entry, as willSee does.
+ *   answer   XL.net's voice (<= 700) and willSee (<= 200): every number grounds on the visual's
+ *   willSee  cites (groundValue; pricing.* and [negative] facts ground nothing), no currency, no
+ *            injection-screen hit.
+ * Any field over its limit, carrying an em dash, an angle-bracket run, stacked marks, a non-ASCII
+ * numeral or currency drops the entry; nothing is cut to pass. A repeated quote is one entry. A
+ * block with no surviving entry drops; at most ECHO_LIMITS.entries[1] are kept, in model order.
+ */
+function parseClientEcho(
+  item: Record<string, unknown>,
+  cites: string[],
+  corpus: string,
+  echo: EchoIndex | null,
+  tripsScreen: (s: string) => boolean
+): Parsed {
+  if (echo === null) return { drop: "no-echo-corpus" };
+  if (!Array.isArray(item.entries)) return { drop: "malformed" };
+  if (cites.length === 0) return { drop: "no-cites" };
+  const entries: Body<"client-echo">["entries"] = [];
+  for (const e of item.entries.slice(0, 12)) {
+    if (entries.length >= ECHO_LIMITS.entries[1]) break;
+    if (!isObj(e)) continue;
+    const said = echoText(e.said, ECHO_LIMITS.said);
+    if (said === null || said.length < ECHO_LIMITS.saidMin || hasCurrency(said) || tripsScreen(said)) continue;
+    // Whole words only: "happy with ..." cut out of "unhappy with ..." is not the client's line.
+    const hits = wordOccurrences(echo.flat, said);
+    if (hits.length === 0 || entries.some((x) => x.said === said)) continue;
+    // The optional sub-head is XL.net's voice, screened as a matrix subject is: one line, at most
+    // 60, letters, no currency, no injection hit, every number stated by the cited facts.
+    let title: string | undefined;
+    if (e.title != null && e.title !== "") {
+      if (typeof e.title !== "string" || /[\r\n]/.test(e.title.trim())) continue;
+      const t = echoText(e.title, ECHO_LIMITS.title);
+      if (t === null || t.length < 2 || !/\p{L}/u.test(t) || hasCurrency(t) || tripsScreen(t)) continue;
+      if (!groundValue(t, corpus)) continue;
+      title = t;
+    }
+    const answer = echoText(e.answer, ECHO_LIMITS.answer);
+    if (answer === null || !/\p{L}/u.test(answer) || hasCurrency(answer) || tripsScreen(answer)) continue;
+    if (!groundValue(answer, corpus)) continue;
+    let willSee: string | undefined;
+    if (e.willSee != null && e.willSee !== "") {
+      const w = echoText(e.willSee, ECHO_LIMITS.willSee);
+      if (w === null || !/\p{L}/u.test(w) || hasCurrency(w) || tripsScreen(w) || !groundValue(w, corpus)) continue;
+      willSee = w;
+    }
+    let saidBy: string | undefined;
+    if (e.saidBy != null && e.saidBy !== "") {
+      const by = echoText(e.saidBy, ECHO_LIMITS.saidBy);
+      if (by !== null && /\p{L}/u.test(by) && !hasCurrency(by) && !tripsScreen(by)) {
+        if (hits.some((at) => attributes(echo, at, at + said.length, by))) saidBy = by;
+      }
+    }
+    entries.push({
+      ...(title !== undefined ? { title } : {}),
+      said,
+      ...(saidBy !== undefined ? { saidBy } : {}),
+      answer,
+      ...(willSee !== undefined ? { willSee } : {}),
+    });
+  }
+  if (entries.length < ECHO_LIMITS.entries[0]) return { drop: "no-grounded-entries" };
+  return { ok: { kind: "client-echo", entries }, cites };
+}
+
 /**
  * Validate the drafter's `visuals` array. Never throws and never fails a section: a visual that is
  * shape-valid and grounded becomes a block; one that is malformed (or cites nothing known) but
@@ -894,6 +1114,13 @@ export function parseModelVisuals(
     /** A brief document's text (round 32): a timeline STEP KICKER's numbers may ground against it
      *  as well as the cited facts. Titles, bodies and every other kind ignore it. */
     kickerCorpus?: string;
+    /** Round 34: the fenced source text (intake headers stripped), brief or real RFP. A
+     *  `client-echo` quote must be a verbatim substring of it; absent, that kind drops. Nothing
+     *  else reads it, and it never grounds a number. */
+    echoCorpus?: string;
+    /** Round 34: the server's injection screen (brain.ts passes it; this module cannot import
+     *  it). Every client-echo field that trips it drops its entry. Absent: nothing trips. */
+    tripsScreen?: (s: string) => boolean;
   }
 ): { blocks: DraftBlock[]; degraded: string[]; dropped: Dropped[]; tooWide: number } {
   const blocks: DraftBlock[] = [];
@@ -919,6 +1146,9 @@ export function parseModelVisuals(
   const tileById = new Map([...byId].filter(([, f]) => !isPricingFact(f)));
   const kickerCorpus =
     typeof ctx?.kickerCorpus === "string" && ctx.kickerCorpus.trim() ? ctx.kickerCorpus : null;
+  const echoCorpus =
+    typeof ctx?.echoCorpus === "string" && ctx.echoCorpus.trim() ? echoIndexOf(ctx.echoCorpus) : null;
+  const tripsScreen = typeof ctx?.tripsScreen === "function" ? ctx.tripsScreen : () => false;
   // The table salvage (parseTable): the section's own cites that resolve, pricing facts out, and
   // the corpus of the affirmative ones (none left: no salvage). Built once; used only by a table
   // that cited nothing known.
@@ -949,18 +1179,24 @@ export function parseModelVisuals(
         kind !== "callout" &&
         kind !== "cards" &&
         kind !== "timeline" &&
-        kind !== "ledger"
+        kind !== "ledger" &&
+        kind !== "client-echo"
       ) {
         dropped.push({ kind, reason: "unknown-kind" });
         continue;
       }
+      // The client-echo lane screens currency PER ENTRY (parseClientEcho): one quote naming the
+      // client's own spend drops that entry, not every other entry with it.
       const strings: string[] = [];
-      collectStrings(item, strings);
+      if (kind !== "client-echo") collectStrings(item, strings);
       if (strings.some(hasCurrency)) {
         dropped.push({ kind, reason: "currency" });
         continue;
       }
-      const cites = knownCites(item.cites, byId);
+      const ownCites = knownCites(item.cites, byId);
+      // A client echo that cites nothing known answers from the section's own cites (the table
+      // salvage's set: pricing facts out), never from every supplied fact.
+      const cites = kind === "client-echo" && ownCites.length === 0 ? salvage.cites : ownCites;
       // A [negative] fact stays citable (it is what the visual answers) but its numbers never
       // ground a cell: "not a 3-year term" must not put "3-year" in a table.
       const corpus = textOf(cites.filter((id) => byId.get(id)?.polarity !== "negative"));
@@ -975,7 +1211,9 @@ export function parseModelVisuals(
                 ? parseCards(item, cites, corpus)
                 : kind === "timeline"
                   ? parseTimeline(item, cites, corpus, kickerCorpus)
-                  : parseLedger(item, cites, corpus);
+                  : kind === "client-echo"
+                    ? parseClientEcho(item, cites, corpus, echoCorpus, tripsScreen)
+                    : parseLedger(item, cites, corpus);
 
       if ("tooWide" in parsed) tooWide += parsed.tooWide ?? 0;
       if ("drop" in parsed) {
@@ -1509,6 +1747,89 @@ export function buildOnboardingTimeline(facts: GroundFact[]): DraftBlock | null 
   };
 }
 
+/** A priority row of the SLA fact: "P1 Critical 15-minute response and 4-hour target resolution",
+ *  "P4 Low or Request 8 business hours and 5 business days", optionally with a stated definition
+ *  in parentheses after the name ("P1 Critical (all users down) ..."). */
+const SLA_ROW =
+  /^(P\d)\s+([A-Za-z][A-Za-z /&+-]*?)(?:\s*\(([^()]{3,160})\))?\s+(\d+(?:\.\d+)?(?:-| )[a-z]+(?: (?!response\b)[a-z]+)?)(?: response)? and (\d+(?:\.\d+)?(?:-| )[a-z]+(?: [a-z]+)?)(?: target resolution)?$/i;
+
+/** "15-minute" reads "15 minutes" in a cell; every other value is the fact's own words. */
+function slaDuration(v: string): string {
+  const m = /^(\d+(?:\.\d+)?)-([a-z]+)$/i.exec(v);
+  return m ? `${m[1]} ${m[2]}${m[1] === "1" ? "" : "s"}` : v;
+}
+
+/**
+ * The service level table (round 34, Q3), origin "sla": the existing `table` kind built from the
+ * live operations.sla-targets fact by regex, no model call. PRIORITY | RESPONSE | TARGET
+ * RESOLUTION, with a DEFINITION column only when the fact states one (a parenthesis after a
+ * priority's name); the caption is the statement's lead before its colon when that carries no
+ * number. Every cell is re-checked through groundValue against the statement and the currency
+ * screen, the gates a model table passes. null unless at least two priority rows parse.
+ */
+export function buildSlaTable(facts: GroundFact[]): DraftBlock | null {
+  const f = factFor(facts, "operations.sla-targets");
+  if (!f) return null;
+  const statement = normText(f.statement).replace(/\s+/g, " ").trim();
+  const colon = statement.indexOf(":");
+  if (colon < 0) return null;
+  const lead = statement.slice(0, colon).trim();
+  const rows: { priority: string; definition: string; response: string; resolution: string }[] = [];
+  for (const seg of statement.slice(colon + 1).split(";")) {
+    const m = SLA_ROW.exec(seg.trim().replace(/\.$/, ""));
+    if (!m) continue;
+    rows.push({
+      priority: `${m[1].toUpperCase()} ${m[2].trim()}`,
+      definition: m[3] ? capFirst(m[3].trim()) : "",
+      response: slaDuration(m[4]),
+      resolution: slaDuration(m[5]),
+    });
+  }
+  if (rows.length < 2 || rows.length > LIMITS.tableRows[1]) return null;
+  const defined = rows.some((r) => r.definition !== "");
+  const headers = defined
+    ? ["Priority", "Definition", "Response", "Target resolution"]
+    : ["Priority", "Response", "Target resolution"];
+  const cells = rows.map((r) =>
+    defined ? [r.priority, r.definition, r.response, r.resolution] : [r.priority, r.response, r.resolution]
+  );
+  const caption = lead.length >= 3 && lead.length <= TITLE_MAX && !/\d/.test(lead) ? lead : null;
+  const all = [caption ?? "", ...cells.flat()];
+  if (all.some((c) => c.length > LIMITS.cell || hasCurrency(c) || /[—―]/.test(c))) return null;
+  if (!all.every((c) => groundValue(c, f.statement))) return null;
+  return {
+    kind: "table",
+    caption,
+    columns: headers.map((header) => ({ header, align: "left" as const })),
+    rows: cells,
+    emphasizeLastRow: false,
+    id: newBlockId(),
+    after: 0,
+    cites: [f.id],
+    generatedBy: "system",
+    origin: "sla",
+  };
+}
+
+/** Service-level language in a table's caption or headers, or a priority code leading a row. */
+const SLA_TEXT = /\b(?:slas?|service levels?|priority|priorities|response times?|resolution|severity)\b/i;
+
+/** Does this block already cover service levels (so the system SLA table is not added beside
+ *  it)? A table whose caption or headers speak of service levels, or whose rows lead with a
+ *  priority code ("P1", "P2"). Every other kind: no. */
+export function isSlaTable(b: DraftBlock): boolean {
+  if (b.kind !== "table") return false;
+  if (b.origin === "sla") return true;
+  if (SLA_TEXT.test([b.caption ?? "", ...b.columns.map((c) => c.header)].join(" "))) return true;
+  return b.rows.some((r) => /^p[1-5]\b/i.test((r[0] ?? "").trim()));
+}
+
+/** A paragraph that is a markdown table about service levels (the lift turns it into a table
+ *  block after the landing, so the landing counts it as a model SLA table). */
+export function isSlaMarkdown(paragraph: string): boolean {
+  return hasMarkdownTable(paragraph) && (SLA_TEXT.test(paragraph) || /(?:^|\|)\s*p[1-5]\b/im.test(paragraph));
+}
+
 /**
  * The client references block (references-block.ts), origin "references", for the server route
  * that lands the answer to the references question. No cites: the entries are the person's, not
@@ -1636,6 +1957,10 @@ export function draftBlockSummary(b: DraftBlock): string {
       const n = b.references.length;
       return `Client references · ${n} ${n === 1 ? "reference" : "references"}`;
     }
+    case "client-echo": {
+      const n = b.entries.length;
+      return `What you told us · ${n} ${n === 1 ? "point" : "points"}`;
+    }
   }
 }
 
@@ -1679,6 +2004,15 @@ export function serializeBlockForPrompt(block: DraftBlock): string {
       break;
     case "references":
       for (const r of block.references) lines.push(r.organization);
+      break;
+    case "client-echo":
+      // XL.net's answers only: the quotes are the CLIENT's text, and an echo corpus never feeds
+      // back into another turn (round 34). The revise and whole-document turns see what XL.net
+      // said, never what the client wrote.
+      for (const e of block.entries) {
+        const reply = e.willSee ? `${e.answer} ${e.willSee}` : e.answer;
+        lines.push(e.title ? `${e.title}: ${reply}` : reply);
+      }
       break;
   }
   const kept: string[] = [];

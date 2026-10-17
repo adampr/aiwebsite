@@ -18,6 +18,11 @@ import {
   buildAboutBlocks,
   buildOnboardingTimeline,
   buildServiceStatsBlock,
+  buildSlaTable,
+  collapseEchoCorpus,
+  ECHO_LIMITS,
+  isSlaMarkdown,
+  isSlaTable,
   draftBlockSummary,
   groundValue,
   hasCurrency,
@@ -1181,7 +1186,8 @@ check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-g
   const about = landDraftBlocks({ ...base, label: "4.", paragraphCount: 3, modelBlocks: fin.blocks, sections: [] });
   check("land: the about section opens with grid + badges, the model block after them", [about.blocks.map((b) => [b.kind, b.origin ?? null, b.generatedBy, b.after]), about.about, about.serviceStats], [[["fact-grid", "about", "system", 0], ["badge-strip", "about", "system", 0], ["stat-tiles", null, "llm", 1]], 2, 0]);
   const svc = landDraftBlocks({ ...base, label: "3.", paragraphCount: 3, modelBlocks: [], sections: [] });
-  check("land: the service section gets the tiles after its first paragraph", svc.blocks.map((b) => [b.kind, b.origin, b.after]), [["stat-tiles", "service-stats", 1]]);
+  // Round 34 (Q3): the SLA table follows the tiles on the service section.
+  check("land: the service section gets the tiles, then the SLA table, after its first paragraph", [svc.blocks.map((b) => [b.kind, b.origin, b.after]), svc.sla], [[["stat-tiles", "service-stats", 1], ["table", "sla", 1]], 1]);
   check("land: an empty section anchors the tiles at 0", landDraftBlocks({ ...base, label: "3.", paragraphCount: 0, modelBlocks: [], sections: [] }).blocks[0]?.after, 0);
   check("land: an ordinary section keeps only the model's blocks", landDraftBlocks({ ...base, label: "2.", paragraphCount: 3, modelBlocks: fin.blocks, sections: [] }).blocks, fin.blocks);
   check("land: nothing at all is an empty list (the key stays absent)", landDraftBlocks({ ...base, label: "2.", paragraphCount: 3, modelBlocks: [], sections: [] }).blocks, []);
@@ -1193,7 +1199,7 @@ check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-g
   const sysTiles = buildServiceStatsBlock(facts)!;
   const echo: DraftBlock = { ...sysTiles, id: newBlockId(), generatedBy: "llm", origin: undefined };
   delete echo.origin;
-  check("land: a model tile block that repeats the system tiles is dropped", landDraftBlocks({ ...base, label: "3.", paragraphCount: 3, modelBlocks: [echo], sections: [] }).blocks.length, 1);
+  check("land: a model tile block that repeats the system tiles is dropped (tiles + SLA table remain)", landDraftBlocks({ ...base, label: "3.", paragraphCount: 3, modelBlocks: [echo], sections: [] }).blocks.map((b) => b.origin), ["service-stats", "sla"]);
   const six: DraftBlock[] = Array.from({ length: 6 }, () => ({ kind: "callout" as const, title: null, body: "Text.", tone: "neutral" as const, id: newBlockId(), after: 2, cites: [fid("book.retention")], generatedBy: "llm" as const }));
   const capped = landDraftBlocks({ ...base, label: "4.", paragraphCount: 3, modelBlocks: six, sections: [] });
   check("land: the cap trims the model's blocks, never the system's", [capped.blocks.length, capped.blocks.filter((b) => b.generatedBy === "system").length, capped.trimmed], [LIMITS.blocksPerSection, 2, 2]);
@@ -1212,7 +1218,7 @@ check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-g
   type Rec = { label: string; title: string; paragraphs: string[]; cites: string[]; generatedBy: "llm" | "human"; updatedAt: string; blocks?: DraftBlock[] };
   const mk = (label: string, blocks?: DraftBlock[]): Rec => ({ label, title: "T", paragraphs: ["a", "b"], cites: ["c1"], generatedBy: "llm", updatedAt: "then", ...(blocks ? { blocks } : {}) });
   const doc = [mk("1."), mk("4."), mk("__letter")];
-  check("op: action names are the closed set", [...VISUALS_ACTIONS].map(isVisualsAction).concat(isVisualsAction("table"), isVisualsAction(undefined)), [true, true, true, true, false, false]);
+  check("op: action names are the closed set", [[...VISUALS_ACTIONS], [...VISUALS_ACTIONS].map(isVisualsAction).concat(isVisualsAction("table"), isVisualsAction(undefined))], [["about", "service-stats", "onboarding", "sla", "remove"], [true, true, true, true, true, false, false]]);
 
   const a1 = applyVisualsOp(doc, { label: "4.", action: "about" }, facts, NOW);
   yes("op about: lands", a1.ok);
@@ -1925,6 +1931,238 @@ const notPricing = (ids: string[]) => ids.filter((id) => !facts.find((f) => f.id
   const sectionRoute = readFileSync(new URL("../src/app/api/rfp/proposals/[id]/section/route.ts", import.meta.url), "utf8");
   yes("section route: the PATCH precheck is the shared detector", /function mayHoldMarkdownTable[\s\S]{0,120}hasMarkdownTable\(p\)/.test(sectionRoute));
   check("section route: both PATCH bodies carry liftRefused when > 0", (sectionRoute.match(/\? \{ liftRefused: (retitleLift|lift)\.refused \} : \{\}\),\n\s*\}\);/g) ?? []).length, 2);
+}
+
+
+// ---- round 34: the system SLA table (Q3) and the client-echo kind (Q2a) ----------------------
+{
+  const slaFact = fact("operations.sla-targets");
+  const slaT = buildSlaTable(facts);
+  check(
+    "sla: built from the real fact statement, 3 columns (no definition stated), cites that fact",
+    slaT && slaT.kind === "table"
+      ? [slaT.caption, slaT.columns.map((c) => c.header), slaT.rows, slaT.cites, slaT.origin, slaT.generatedBy, slaT.emphasizeLastRow, slaT.after]
+      : slaT,
+    [
+      "Suggested SLA targets, which clients can adjust",
+      ["Priority", "Response", "Target resolution"],
+      [
+        ["P1 Critical", "15 minutes", "4 hours"],
+        ["P2 High", "1 hour", "8 business hours"],
+        ["P3 Medium", "4 business hours", "2 business days"],
+        ["P4 Low or Request", "8 business hours", "5 business days"],
+      ],
+      [slaFact.id],
+      "sla",
+      "system",
+      false,
+      0,
+    ]
+  );
+  check("sla: every cell grounds on the statement, none carries money", slaT && slaT.kind === "table" ? slaT.rows.flat().every((c) => groundValue(c, slaFact.statement) && !hasCurrency(c)) : false, true);
+  check("sla: a stored SLA table reads back unchanged (origin sla is a stored origin)", sanitizeStoredBlocks([slaT], 3), [slaT]);
+  check("sla: the content-model schema accepts it", (() => { const { after: _a, origin: _o, ...body } = slaT!; return blockSchema.safeParse({ ...body, sectionId: "sec_x", ordinal: 0, editedByHuman: false }).success; })(), true);
+  const withDef = facts.map((f) =>
+    f.id === slaFact.id
+      ? { ...f, statement: f.statement.replace("P1 Critical 15-minute", "P1 Critical (all users down) 15-minute") }
+      : f
+  );
+  const defT = buildSlaTable(withDef);
+  check(
+    "sla: a stated definition adds the DEFINITION column (blank where a row states none)",
+    defT && defT.kind === "table" ? [defT.columns.map((c) => c.header), defT.rows[0], defT.rows[1]] : defT,
+    [["Priority", "Definition", "Response", "Target resolution"], ["P1 Critical", "All users down", "15 minutes", "4 hours"], ["P2 High", "", "1 hour", "8 business hours"]]
+  );
+  check("sla: no live fact, a negative one, or a reworded one builds nothing", [
+    buildSlaTable(facts.filter((f) => f.id !== slaFact.id)),
+    buildSlaTable(facts.map((f) => (f.id === slaFact.id ? { ...f, polarity: "negative" } : f))),
+    buildSlaTable(facts.map((f) => (f.id === slaFact.id ? { ...f, statement: "Targets are agreed with each client." } : f))),
+  ], [null, null, null]);
+  check("sla: a single parsable row is no table", buildSlaTable(facts.map((f) => (f.id === slaFact.id ? { ...f, statement: "Targets: P1 Critical 15-minute response and 4-hour target resolution." } : f))), null);
+
+  // isSlaTable / isSlaMarkdown: what counts as the model already covering service levels.
+  const modelSla: DraftBlock = { kind: "table", caption: null, columns: [{ header: "Level", align: "left" }, { header: "Answer", align: "left" }], rows: [["P1", "15 minutes"]], emphasizeLastRow: false, id: newBlockId(), after: 1, cites: [slaFact.id], generatedBy: "llm" };
+  const otherTable: DraftBlock = { kind: "table", caption: "Tools", columns: [{ header: "Tool", align: "left" }, { header: "Use", align: "left" }], rows: [["Kaseya", "Monitoring"]], emphasizeLastRow: false, id: newBlockId(), after: 1, cites: [slaFact.id], generatedBy: "llm" };
+  check("isSlaTable: a priority-led row, a service-level header, the system table; not a tools table or a callout", [isSlaTable(modelSla), isSlaTable({ ...otherTable, columns: [{ header: "Response time", align: "left" }, { header: "Use", align: "left" }] }), isSlaTable(slaT!), isSlaTable(otherTable), isSlaTable({ kind: "callout", title: "SLA", body: "Text.", tone: "neutral", id: newBlockId(), after: 0, cites: [slaFact.id], generatedBy: "llm" })], [true, true, true, false, false]);
+  check("isSlaMarkdown: a pipe table of priorities yes, prose about SLAs no", [isSlaMarkdown("| Priority | Response |\n| --- | --- |\n| P1 | 15 minutes |"), isSlaMarkdown("Our SLA targets are listed below.")], [true, false]);
+
+  // Landing: the one-origin rule, and the model's own SLA table wins.
+  const base34 = { structure: fixtureStructure, requirements: fixtureRequirements, sharedFacts: facts };
+  const landSvc = (extra: Record<string, unknown> = {}) => landDraftBlocks({ ...base34, label: "3.", paragraphCount: 3, modelBlocks: [], sections: [], ...extra });
+  check("land sla: a model SLA table means no system one", [landSvc({ modelBlocks: [modelSla] }).blocks.map((b) => b.origin ?? b.generatedBy), landSvc({ modelBlocks: [modelSla] }).sla], [["service-stats", "llm"], 0]);
+  check("land sla: a markdown SLA table in the drafted prose means no system one", landSvc({ paragraphs: ["Intro.", "| Priority | Response |\n| --- | --- |\n| P1 | 15 minutes |"] }).sla, 0);
+  check("land sla: another section holding the SLA table keeps it there", landSvc({ sections: [{ label: "1.", paragraphs: ["x"], blocks: [slaT] }] }).blocks.map((b) => b.origin), ["service-stats"]);
+  check("land sla: a redraft of the holder rebuilds it", landSvc({ sections: [{ label: "3.", paragraphs: ["x"], blocks: [slaT] }] }).sla, 1);
+  check("land sla: never on an ordinary section", landDraftBlocks({ ...base34, label: "2.", paragraphCount: 3, modelBlocks: [], sections: [] }).sla, 0);
+  check("land sla: a non-SLA model table does not suppress it", landSvc({ modelBlocks: [otherTable] }).blocks.map((b) => b.origin ?? "model"), ["service-stats", "sla", "model"]);
+
+  // The visuals op "sla".
+  const NOW34 = "2026-10-16T16:00:00.000Z";
+  const rec = (label: string, blocks?: DraftBlock[]) => ({ label, title: "T", paragraphs: ["a", "b"], cites: ["c1"], generatedBy: "llm" as const, updatedAt: "then", ...(blocks ? { blocks } : {}) });
+  const op1 = applyVisualsOp([rec("3.")], { label: "3.", action: "sla" }, facts, NOW34);
+  check("op sla: lands after the first paragraph, system-built", op1.ok && op1.section.blocks?.map((b) => [b.kind, b.origin, b.after, b.generatedBy]), [["table", "sla", 1, "system"]]);
+  const op2 = op1.ok ? applyVisualsOp(op1.sections, { label: "3.", action: "sla" }, facts, NOW34) : null;
+  check("op sla: a second call refreshes in place, never duplicates", op2 && op2.ok && [op2.section.blocks?.length, op2.added, op2.removed], [1, 1, 1]);
+  const op3 = applyVisualsOp([rec("3.")], { label: "3.", action: "sla" }, facts.filter((f) => f.id !== slaFact.id), NOW34);
+  check("op sla: no SLA fact is a 422 naming the table", op3.ok ? null : [op3.status, op3.code, op3.message], [422, "no_facts", "The knowledge base does not hold the facts the service level table is built from, so nothing was added."]);
+}
+
+{
+  const desk = fid("operations.service-desk-hours");
+  const pricing = fid("pricing.fully-managed-rate");
+  const SOURCE = [
+    "Section 2. Current Challenges",
+    "Our current provider closes tickets before anyone confirms the fix works.",
+    "IT Manager Dana Ruiz: \"We had to chase   every ticket ourselves.\"",
+    "We spend $4,000 a month on emergency calls.",
+    "We told Pat Lee the reports were always late.",
+  ].join("\n");
+  const SAID = "Our current provider closes tickets before anyone confirms the fix works.";
+  const ANSWER = "More than 99% of calls are answered live by a human.";
+  const echoCtx = (extra: Record<string, unknown> = {}) => ({ ...ctx(3), echoCorpus: SOURCE, ...extra });
+  const echoItem = (entries: unknown, extra: Record<string, unknown> = {}) => ({ kind: "client-echo", after: 1, cites: [desk], entries, ...extra });
+  const one = (e: Record<string, unknown>) => parseModelVisuals([echoItem([e])], echoCtx());
+  const entriesOf = (r: ReturnType<typeof parseModelVisuals>) => r.blocks.map((b) => (b.kind === "client-echo" ? b.entries : null))[0] ?? null;
+
+  const ok1 = one({ said: SAID, answer: ANSWER, willSee: "A live person on the line." });
+  check("echo: a verbatim quote with a grounded answer is a block citing the visual's fact", [entriesOf(ok1), ok1.blocks[0]?.cites, ok1.blocks[0]?.generatedBy], [[{ said: SAID, answer: ANSWER, willSee: "A live person on the line." }], [desk], "llm"]);
+  check("echo: the quote matches across collapsed whitespace", entriesOf(one({ said: "We had to chase every ticket ourselves.", answer: ANSWER }))?.[0]?.said, "We had to chase every ticket ourselves.");
+  const offByOne = one({ said: "Our current provider closes tickets before anyone confirm the fix works.", answer: ANSWER });
+  check("echo: a quote one character off drops the entry, and with it the block", [offByOne.blocks.length, offByOne.dropped], [0, [{ kind: "client-echo", reason: "no-grounded-entries" }]]);
+  check("echo: a truncated quote is still a substring (never cut by us), a reworded one is not", [entriesOf(one({ said: "closes tickets before anyone confirms", answer: ANSWER }))?.length, one({ said: "closes tickets before somebody confirms", answer: ANSWER }).blocks.length], [1, 0]);
+  check("echo: saidBy within 120 characters of the quote is kept", entriesOf(one({ said: "We had to chase every ticket ourselves.", saidBy: "Dana Ruiz", answer: ANSWER }))?.[0]?.saidBy, "Dana Ruiz");
+  check("echo: saidBy the source never names is dropped, the entry kept", entriesOf(one({ said: "We had to chase every ticket ourselves.", saidBy: "Mike Smith", answer: ANSWER })), [{ said: "We had to chase every ticket ourselves.", answer: ANSWER }]);
+  const far = `Pat Lee wrote the notes below. ${"Filler words about the office move. ".repeat(5)}${SAID}`;
+  const near = `Pat Lee wrote: ${SAID}`;
+  check("echo: saidBy over 120 characters from the quote is dropped; beside it, kept", [far, near].map((c) => entriesOf(parseModelVisuals([echoItem([{ said: SAID, saidBy: "Pat Lee", answer: ANSWER }])], echoCtx({ echoCorpus: c })))?.[0]?.saidBy ?? null), [null, "Pat Lee"]);
+  check("echo: saidBy found only INSIDE the quote is no attribution", entriesOf(one({ said: "We told Pat Lee the reports were always late.", saidBy: "Pat Lee", answer: ANSWER })), [{ said: "We told Pat Lee the reports were always late.", answer: ANSWER }]);
+  check("echo: the attribution window is 120 characters", ECHO_LIMITS.saidByWindow, 120);
+  check("echo: an answer figure no cited fact states drops the entry", one({ said: SAID, answer: "We answer 97% of calls live." }).blocks.length, 0);
+  check("echo: a pricing fact grounds nothing in the answer", parseModelVisuals([echoItem([{ said: SAID, answer: "Fully managed users are 247 each month." }], { cites: [pricing] })], echoCtx()).blocks.length, 0);
+  check("echo: an em dash in the answer refuses the entry (never replaced)", one({ said: SAID, answer: "Calls are answered live — always." }).blocks.length, 0);
+  check("echo: an ungrounded willSee drops the entry", one({ said: SAID, answer: ANSWER, willSee: "Answers in 5 minutes." }).blocks.length, 0);
+  check("echo: a quote under the minimum length drops", one({ said: "fix works", answer: ANSWER }).blocks.length, 0);
+  const mixed = parseModelVisuals([echoItem([
+    { said: "We spend $4,000 a month on emergency calls.", answer: ANSWER },
+    { said: SAID, answer: ANSWER },
+  ])], echoCtx());
+  check("echo: a quote carrying money drops ITS entry only, never the block", [entriesOf(mixed)?.map((e) => e.said), mixed.dropped], [[SAID], []]);
+  check("echo: the injection screen drops an entry it trips", parseModelVisuals([echoItem([{ said: SAID, answer: ANSWER }])], echoCtx({ tripsScreen: (t: string) => t.includes("closes tickets") })).blocks.length, 0);
+  check("echo: no echo corpus, no client-echo", parseModelVisuals([echoItem([{ said: SAID, answer: ANSWER }])], ctx(3)).dropped, [{ kind: "client-echo", reason: "no-echo-corpus" }]);
+  check("echo: the corpus is the source only, never a fact (a fact sentence is no quote)", one({ said: fact("operations.service-desk-hours").statement.slice(0, 60), answer: ANSWER }).blocks.length, 0);
+  const quotes = [SAID, SAID, "We spend", "Our current provider closes tickets", "We had to chase every ticket ourselves.", "IT Manager Dana Ruiz", "We told Pat Lee the reports were always late.", "Current Challenges", "Section 2. Current Challenges"];
+  const many = parseModelVisuals([echoItem(quotes.map((said) => ({ said, answer: ANSWER })))], echoCtx());
+  check("echo: a repeated quote is one entry, a short one drops, at most six entries in model order", entriesOf(many)?.map((e) => e.said), [SAID, ...quotes.slice(3, 8)]);
+  const uncited = parseModelVisuals([echoItem([{ said: SAID, answer: ANSWER }], { cites: [] })], { ...echoCtx(), sectionCites: [desk, pricing] });
+  check("echo: citing nothing known falls back to the section's own cites, pricing facts out", uncited.blocks[0]?.cites, [desk]);
+  check("echo: citing nothing at all, with no section cites, drops", parseModelVisuals([echoItem([{ said: SAID, answer: ANSWER }], { cites: [] })], echoCtx()).dropped, [{ kind: "client-echo", reason: "no-cites" }]);
+  check("echo: collapseEchoCorpus is normText + whitespace collapse", collapseEchoCorpus("a  b\n\tc"), "a b c");
+
+  // M1: whole words only. A quote cut out of the middle of a word flips its
+  // meaning ("happy" out of "unhappy") and drops; one cut between words is a
+  // substring that passes.
+  {
+    const SRC_M1 = "We are unhappy with our current provider's response times. Staff are dissatisfied with how tickets are closed.";
+    const m1 = (said: string) => entriesOf(parseModelVisuals([echoItem([{ said, answer: ANSWER }])], echoCtx({ echoCorpus: SRC_M1 })))?.[0]?.said ?? null;
+    check(
+      "echo M1: a quote starting or ending mid-word drops; between words it passes",
+      [
+        m1("happy with our current provider's response times."),
+        m1("satisfied with how tickets are closed."),
+        m1("We are unhappy with our current provider's response tim"),
+        m1("unhappy with our current provider's response times."),
+        m1("with our current provider's response times."),
+      ],
+      [null, null, null, "unhappy with our current provider's response times.", "with our current provider's response times."]
+    );
+  }
+  // F7: an attribution must sit on the quote's own line, or in an
+  // attribution pattern right beside it across a line break; a name that is
+  // merely nearby (a contact line above a complaint) drops.
+  {
+    const by = (src: string, said: string, saidBy: string) =>
+      entriesOf(parseModelVisuals([echoItem([{ said, saidBy, answer: ANSWER }])], echoCtx({ echoCorpus: src })))?.[0] ?? null;
+    const T = "Tickets were marked complete before anyone confirmed the problem was actually fixed.";
+    const contact = by(`Questions about this RFP go to Jane Doe, IT Manager.\n${T}`, T, "Jane Doe");
+    check("echo F7: a contact name on the line above a complaint is no attribution (saidBy drops, the entry stays)", [contact?.said, contact?.saidBy ?? null], [T, null]);
+    check(
+      "echo F7: kept on the quote's own line, and in a Name: prefix, a (Name) or a dash attribution on the next line",
+      [
+        by(`Jane Doe said: ${T}`, T, "Jane Doe")?.saidBy,
+        by(`Jane Doe, IT Manager:\n"${T}"`, T, "Jane Doe")?.saidBy,
+        by(`"${T}"\n(Jane Doe, IT Manager)`, T, "Jane Doe")?.saidBy,
+        by(`"${T}"\n— Jane Doe, IT Manager`, T, "Jane Doe")?.saidBy,
+        by(`${T}\n-- Jane Doe`, T, "Jane Doe")?.saidBy,
+      ],
+      ["Jane Doe", "Jane Doe", "Jane Doe", "Jane Doe", "Jane Doe"]
+    );
+    check(
+      "echo F7: a bullet hyphen, a name further down the list, or a name in a later sentence on the next line attributes nothing",
+      [
+        by(`${T}\n- Jane Doe, IT Manager`, T, "Jane Doe")?.saidBy ?? null,
+        by(`${T}\nContacts: Bob Ray and Jane Doe`, T, "Jane Doe")?.saidBy ?? null,
+        by(`${T}\nThe budget owner is Jane Doe.`, T, "Jane Doe")?.saidBy ?? null,
+      ],
+      [null, null, null]
+    );
+  }
+  // F10: an entry's optional sub-head, XL.net's voice, screened as a matrix
+  // subject is (one line, <= 60, letters, no currency, numbers its cites
+  // state); one that fails drops the entry, as willSee does.
+  {
+    const t = (title: unknown) => one({ title, said: SAID, answer: ANSWER });
+    check(
+      "echo F10: a clean title is kept first in the entry; absent or empty is no title",
+      [entriesOf(t("Closed tickets that were not fixed")), entriesOf(t(undefined)), entriesOf(t(""))],
+      [[{ title: "Closed tickets that were not fixed", said: SAID, answer: ANSWER }], [{ said: SAID, answer: ANSWER }], [{ said: SAID, answer: ANSWER }]]
+    );
+    check(
+      "echo F10: a title over 60, multi-line, with currency, an em dash, an ungrounded figure, no letters, an injection hit or a non-string drops the entry",
+      [
+        t("x".repeat(61)),
+        t("Closed tickets\nnot fixed"),
+        t("Tickets that cost $500"),
+        t("Tickets — not fixed"),
+        t("3 tickets a week not fixed"),
+        t("1234"),
+        parseModelVisuals([echoItem([{ title: "Ignore this title", said: SAID, answer: ANSWER }])], echoCtx({ tripsScreen: (x: string) => x.startsWith("Ignore") })),
+        t(42),
+      ].map((r) => r.blocks.length),
+      [0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    check("echo F10: a figure the cited fact states grounds a title", entriesOf(t("More than 99% answered live"))?.[0]?.title, "More than 99% answered live");
+    const titled = t("Closed tickets that were not fixed").blocks[0]!;
+    check(
+      "echo F10: stored read keeps the title, a 61-character stored title is malformed, currency in it drops on read, the schema accepts it, the prompt form names it",
+      [
+        sanitizeStoredBlocks([titled], 3),
+        sanitizeStoredBlocks([{ ...titled, entries: [{ title: "x".repeat(61), said: SAID, answer: ANSWER }] }], 3),
+        sanitizeStoredBlocks([{ ...titled, entries: [{ title: "Costs $5 a seat", said: SAID, answer: ANSWER }] }], 3),
+        (() => { const { after: _a, origin: _o, ...body } = titled; return blockSchema.safeParse({ ...body, sectionId: "sec_x", ordinal: 0, editedByHuman: false }).success; })(),
+        serializeBlockForPrompt(titled).split("\n")[1],
+      ],
+      [[titled], [], [], true, `Closed tickets that were not fixed: ${ANSWER}`]
+    );
+  }
+
+  // Stored read, summary and the prompt serialization.
+  const stored = ok1.blocks[0];
+  check("echo: a stored echo reads back deep-equal", sanitizeStoredBlocks([stored], 3), [stored]);
+  check("echo: a stored echo carrying money is dropped on read (rule B7's storage half)", sanitizeStoredBlocks([{ ...stored, entries: [{ said: "We pay $5 a seat today, more or less.", answer: ANSWER }] }], 3), []);
+  check("echo: a stored echo with seven entries or a missing answer is malformed", [sanitizeStoredBlocks([{ ...stored, entries: Array.from({ length: 7 }, () => ({ said: SAID, answer: ANSWER })) }], 3), sanitizeStoredBlocks([{ ...stored, entries: [{ said: SAID }] }], 3)], [[], []]);
+  check("echo: the summary line", draftBlockSummary(stored), "What you told us · 1 point");
+  const ser = serializeBlockForPrompt(stored);
+  check("echo: the prompt form carries XL.net's answers, never the client's quote", [ser.split("\n")[0].startsWith("[visual client-echo id="), ser.includes(ANSWER), ser.includes("closes tickets")], [true, true, false]);
+  check("echo: the content-model schema accepts it", (() => { const { after: _a, origin: _o, ...body } = stored; return blockSchema.safeParse({ ...body, sectionId: "sec_x", ordinal: 0, editedByHuman: false }).success; })(), true);
+
+  // Threading through finishDraftVisuals (the drafter's path).
+  const finEcho = finishDraftVisuals([echoItem([{ said: SAID, answer: ANSWER }])], ["One.", "Two."], facts, [desk], { echoCorpus: SOURCE, tripsScreen: () => false });
+  check("finish: the echo corpus reaches parseModelVisuals", [finEcho.blocks.map((b) => b.kind), finEcho.stats.kept], [["client-echo"], 1]);
+  check("finish: without it a client-echo drops (round-33 behavior)", finishDraftVisuals([echoItem([{ said: SAID, answer: ANSWER }])], ["One."], facts, [desk]).stats, { returned: 1, kept: 0, degraded: 0, dropped: 1, tooWide: 0 });
+  check("kinds: DRAFT_BLOCK_KINDS stays the closed v1 + references set (client-echo is admitted by name in parseModelVisuals)", DRAFT_BLOCK_KINDS.includes("client-echo" as never), false);
+  const src = readFileSync(new URL("../src/lib/rfp/draft-blocks.ts", import.meta.url), "utf8");
+  check("client-safety: still no lookbehind in draft-blocks.ts", /\(\?<[=!]/.test(src), false);
+  check("no em dash in the round-34 draft-blocks additions", /[—―]/.test(src.slice(src.indexOf("const ECHO_EM_DASH"), src.indexOf("export function parseModelVisuals"))), false);
 }
 
 console.log(failures === 0 ? "\nall draft-block tests passed" : `\n${failures} FAILED`);

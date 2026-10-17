@@ -31,6 +31,19 @@
  *   - a REAL RFP is byte-identical: under a frozen clock the visual
  *     fixture's docx bytes and PDF page texts are pinned to the values the
  *     pre-round-33 emitters (66a5e8e6) produced
+ *
+ * Round 34 (§5.17.22), the questionnaire matrix and the client echo:
+ *   - furniture.ts: the rfpTitle cover lede, the roadmap sentence and its
+ *     placement, the matrix lift (client order, defensive skips, first answer
+ *     wins, system rate notes, questionnaire sections only), the range
+ *     kicker, the summary and its no line, rateNoteFromTable == rateNoteFor
+ *   - resolve-draft over buildR34QuestionnaireInput: one matrix block per
+ *     section closing its flow, the summary on the first, the roadmap, the
+ *     new span fields; nothing new on the round-33 documents
+ *   - one spec: both files carry the range kickers, the pills' words, the
+ *     summary captions, the cost index, the roadmap and the rfpTitle lede;
+ *     the PDF carries section 1's matrix onto a "(continued)" page with the
+ *     head row again; the echo's quotes, attribution and callouts reach both
  */
 
 import { createHash } from "node:crypto";
@@ -42,6 +55,12 @@ import {
   buildFixtureGateInput,
   buildR32GateInput,
   buildR33GateInput,
+  buildR34EchoInput,
+  buildR34QuestionnaireInput,
+  R34_CLIENT,
+  R34_ECHO_BY,
+  R34_ECHO_SAID,
+  R34_RFP_TITLE,
   R33_PARTS,
   r32Blocks,
   R32_ADDRESS,
@@ -74,8 +93,28 @@ import {
   sectionKicker,
   sheetKicker,
   submittedByLine,
+  allQuestionnaireRefs,
+  ledeRfpTitle,
+  letterRoadmapSentence,
+  matrixComplete,
+  matrixFromAnswers,
+  matrixKicker,
+  matrixMissingLine,
+  matrixNoLine,
+  matrixSummaryOf,
+  matrixSummaryTiles,
+  rateNoteFromTable,
+  echoQuote,
+  ECHO_SEE_TITLE,
+  ECHO_TOLD_LABEL,
+  MATRIX_CONTINUED,
+  MATRIX_COST_CAPTION,
+  MATRIX_SUMMARY_CAPTION,
+  MATRIX_SUMMARY_KICKER,
+  MATRIX_SUMMARY_TITLE,
 } from "../src/lib/rfp/furniture";
-import { buildQuote, EMPTY_QUOTE_INPUTS, letterPricingParagraph, partPricingDek } from "../src/lib/rfp/quote";
+import { composeDocTitle } from "../src/lib/rfp/doc-title";
+import { buildQuote, EMPTY_QUOTE_INPUTS, letterPricingParagraph, partPricingDek, rateNoteCodes, rateNoteFor } from "../src/lib/rfp/quote";
 import { serializePartsJson } from "../src/lib/rfp/outline";
 import { RATE_CARD } from "../src/lib/rfp/seed/rate-card";
 import type { Violation } from "../src/lib/rfp/content-model";
@@ -351,6 +390,377 @@ for (const [label, over] of [
     ["timeline", "callout", "cards:3", "fact-grid", "timeline"]
   );
   check("parity: the editorial callout keeps its title", blocks.criticalCallout.kind === "callout" ? blocks.criticalCallout.title : null, "Critical issues skip the queue");
+}
+
+
+// ---- round 34: questionnaire matrix + client echo, furniture (§5.17.22) ----------
+
+check(
+  "cover lede: a stored rfpTitle reads 'in response to your <rfpTitle>' on a real RFP; a brief ignores it; none is byte-identical",
+  [
+    coverLede({ intakeForm: "rfp", who: "Acme", contactName: null, contactTitle: null, rfpTitle: "Vendor Due Diligence Questionnaire" }),
+    coverLede({ intakeForm: "rfp", who: "Acme", contactName: "Dana Whitfield", contactTitle: "CTO", rfpTitle: "RFP for IT Services." }),
+    coverLede({ intakeForm: "rfp", who: null, contactName: null, contactTitle: null, rfpTitle: "RFP 2026-04" }),
+    coverLede({ intakeForm: "brief", who: "Acme", contactName: null, contactTitle: null, rfpTitle: "Anything" }),
+    coverLede({ intakeForm: "rfp", who: "Acme", contactName: null, contactTitle: null, rfpTitle: "   " }),
+    coverLede({ intakeForm: "rfp", who: "Acme", contactName: null, contactTitle: null }),
+  ],
+  [
+    "Prepared for Acme in response to your Vendor Due Diligence Questionnaire.",
+    "Prepared for Acme, Attention: Dana Whitfield, CTO, in response to your RFP for IT Services.",
+    "Prepared in response to your RFP 2026-04.",
+    "Prepared by XL.net for your review.",
+    undefined,
+    undefined,
+  ]
+);
+{
+  // M2: the stored rfpTitle is tidied the way composeDocTitle tidies the
+  // subject (an em dash or a lookalike becomes " · ", whitespace collapsed),
+  // so an em dash never reaches the lede and rule D1 has nothing to block
+  // there; a generic-subject title keeps today's lede.
+  const lede = (t: string) => coverLede({ intakeForm: "rfp", who: "Acme", contactName: null, contactTitle: null, rfpTitle: t });
+  const dashed = [
+    "Request for Proposal \u2014 Managed IT Services",
+    "Request for Proposal\u2015Managed IT Services",
+    "Request for Proposal \u2E3A Managed IT Services",
+    "RFP 2026-14 \u2013 Managed   IT",
+  ].map(lede);
+  check(
+    "cover lede M2: em dash and lookalikes become a middot, whitespace collapses; no em dash can reach the lede",
+    [dashed, dashed.some((l) => /[\u2014\u2015\u2E3A\u2E3B\uFE58\uFE31\uFE32]/.test(l ?? ""))],
+    [
+      [
+        "Prepared for Acme in response to your Request for Proposal · Managed IT Services.",
+        "Prepared for Acme in response to your Request for Proposal · Managed IT Services.",
+        "Prepared for Acme in response to your Request for Proposal · Managed IT Services.",
+        "Prepared for Acme in response to your RFP 2026-14 · Managed IT.",
+      ],
+      false,
+    ]
+  );
+  const generic = [
+    "REQUEST FOR PROPOSALS",
+    "Request for Proposal",
+    "RFP",
+    "Request for Qualifications:",
+    "Due date: March 3, 2026",
+    "# Solicitation",
+    "Invitation to Bid",
+    "RFQ",
+    "Request for Information",
+    "Request for Bids",
+  ];
+  check(
+    "cover lede M2: a generic-subject title (it names only the kind of document) falls back to today's lede",
+    generic.map(lede),
+    generic.map(() => undefined)
+  );
+  check(
+    "cover lede M2: the furniture copy of the generic screen agrees with doc-title.ts (composeDocTitle drops exactly these as a subject)",
+    [...generic, "Vendor Due Diligence Questionnaire", "RFP 2026-04", "Managed IT Services"].map(
+      (t) => [ledeRfpTitle(t) === null, composeDocTitle({ clientName: null, subject: t, fallback: "FALLBACK" }) === "FALLBACK"]
+    ),
+    [...generic, "a", "b", "c"].map((_, i) => (i < generic.length ? [true, true] : [false, false]))
+  );
+  const qT = buildR34QuestionnaireInput();
+  const emInput = { ...qT, doc: { ...qT.doc, rfpTitle: "Request for Proposal \u2014 Managed IT Services" } } as typeof qT;
+  check(
+    "cover lede M2: an em-dash rfpTitle resolves to a middot lede and the gate raises no D1 on it",
+    [resolveDraft(emInput).resolved.cover.lede, runDraftGate(emInput).violations.filter((v) => v.ruleId === "D1").length],
+    [`Prepared for ${R34_CLIENT} in response to your Request for Proposal · Managed IT Services.`, 0]
+  );
+}
+check(
+  "cover lede split: the rfpTitle lede sets the client semibold",
+  coverLedeParts("Acme", "Prepared for Acme in response to your Vendor Due Diligence Questionnaire."),
+  { before: "Prepared for ", strong: "Acme", after: " in response to your Vendor Due Diligence Questionnaire." }
+);
+check(
+  "roadmap: placed directly before the pricing paragraph (or where it would sit); absent, the letter is unchanged",
+  [
+    letterParagraphsWithPricing(["a", "b", "c"], "P", "R"),
+    letterParagraphsWithPricing(["a", "b", "c"], null, "R"),
+    letterParagraphsWithPricing(["a"], "P", "R"),
+    letterParagraphsWithPricing(["a", "b"], "P", null),
+    letterParagraphsWithPricing(["a", "b"], "P"),
+  ],
+  [["a", "b", "R", "P", "c"], ["a", "b", "R", "c"], ["a", "R", "P"], ["a", "P", "b"], ["a", "P", "b"]]
+);
+check(
+  "roadmap: null without a matrix section (real RFP or brief, priced or not); composed from what is present",
+  [
+    letterRoadmapSentence({ matrixKickers: [], partsCount: 0, pricing: true }),
+    letterRoadmapSentence({ matrixKickers: [], partsCount: 4, pricing: true }),
+    letterRoadmapSentence({ matrixKickers: ["Section 1"], partsCount: 0, pricing: false, complete: true }),
+    letterRoadmapSentence({ matrixKickers: ["Section 1", "Section 2"], partsCount: 0, pricing: true, complete: true }),
+    letterRoadmapSentence({ matrixKickers: ["Section 1.2"], partsCount: 3, pricing: true, complete: true }),
+  ],
+  [
+    null,
+    null,
+    "In the pages that follow, Section 1 answers every item of your questionnaire by its own ID, with a summary of the answers first.",
+    "In the pages that follow, Section 1 and Section 2 answer every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing.",
+    "In the pages that follow, the response runs in three parts, Section 1.2 answers every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing.",
+  ]
+);
+check(
+  "roadmap F5: \"every item\" ONLY when every client ref has a row; otherwise item by item, never \"every\"",
+  [
+    letterRoadmapSentence({ matrixKickers: ["Section 1"], partsCount: 0, pricing: false, complete: false }),
+    letterRoadmapSentence({ matrixKickers: ["Section 1", "Section 2"], partsCount: 0, pricing: true }),
+    matrixComplete(
+      [{ label: "1", rows: [{ ref: "A" }, { ref: "B" }] }],
+      [{ label: "1", ref: "A" }, { label: "1", ref: "B" }]
+    ),
+    matrixComplete(
+      [{ label: "1", rows: [{ ref: "A" }] }],
+      [{ label: "1", ref: "A" }, { label: "1", ref: "B" }]
+    ),
+    matrixComplete([{ label: "1", rows: [] }], []),
+    // Scoped per section (the re-refute probe): A and B both number 1..3,
+    // and B's missing Q2 must not count as answered by A's Q2.
+    matrixComplete(
+      [
+        { label: "A", rows: [{ ref: "Q1" }, { ref: "Q2" }, { ref: "Q3" }] },
+        { label: "B", rows: [{ ref: "Q1" }, { ref: "Q3" }] },
+      ],
+      ["A", "B"].flatMap((label) => ["Q1", "Q2", "Q3"].map((ref) => ({ label, ref })))
+    ),
+  ],
+  [
+    "In the pages that follow, Section 1 answers your questionnaire item by item, with a summary of the answers first.",
+    "In the pages that follow, Section 1 and Section 2 answer your questionnaire item by item, with a summary of the answers first, and the Investment page sets out the pricing.",
+    true,
+    false,
+    false,
+    false,
+  ]
+);
+{
+  const reqs = [
+    { id: "r1", structureLabel: "3", ordinal: 7, clientRef: "Q-03" },
+    { id: "r2", structureLabel: "3", ordinal: 5, clientRef: "Q-01" },
+    { id: "r3", structureLabel: "3", ordinal: 6, clientRef: "Q-02" },
+    { id: "r4", structureLabel: "3", ordinal: 8, clientRef: "Q-02" },
+    { id: "r5", structureLabel: "4", ordinal: 9, clientRef: "Q-09" },
+  ];
+  const ans = (ref: string, verdict: string, extra: Record<string, unknown> = {}) => ({ ref, verdict, subject: `S ${ref}`, explanation: `E ${ref}`, cites: [`f_${ref}`], ...extra });
+  const lifted = matrixFromAnswers({
+    answers: [
+      ans("Q-02", "partial", { rateCodes: ["a", "b"] }),
+      ans("Q-02", "no"),
+      ans("Q-09", "yes"),
+      ans("Q-03", "maybe"),
+      ans("Q-01", "yes"),
+      "junk",
+      { ref: 7, verdict: "yes" },
+    ],
+    label: "3",
+    requirements: reqs,
+    rateNote: (codes) => (codes.includes("a") ? `note ${codes.join("+")}` : null),
+  });
+  check(
+    "matrix lift: client (ordinal) order, first answer per ref wins, other-section/corrupt/non-enum answers skipped, rate note by the system, cites unioned",
+    lifted,
+    {
+      rows: [
+        { ref: "Q-01", verdict: "yes", subject: "S Q-01", explanation: "E Q-01" },
+        { ref: "Q-02", verdict: "partial", subject: "S Q-02", explanation: "E Q-02", rateNote: "note a+b" },
+      ],
+      cites: ["f_Q-01", "f_Q-02"],
+    }
+  );
+  check(
+    "matrix lift: a section that is not a questionnaire section (fewer than 3 distinct refs) lifts nothing; no answers lifts nothing",
+    [
+      matrixFromAnswers({ answers: [ans("Q-09", "yes")], label: "4", requirements: reqs, rateNote: () => null }),
+      matrixFromAnswers({ answers: [], label: "3", requirements: reqs, rateNote: () => null }),
+      matrixFromAnswers({ answers: undefined, label: "3", requirements: reqs, rateNote: () => null }),
+    ],
+    [null, null, null]
+  );
+  check(
+    "matrix kicker: the sheet kicker plus the ID range; one row names one ID; no rows leaves it exactly",
+    [matrixKicker("Section 1", [{ ref: "OC-01" }, { ref: "OC-02" }, { ref: "OC-06" }]), matrixKicker("Section 1.4", [{ ref: "A" }]), matrixKicker("Section 3", [])],
+    ["Section 1 · OC-01 to OC-06", "Section 1.4 · A", "Section 3"]
+  );
+  const sum = matrixSummaryOf([
+    { label: "2", rows: [] },
+    { label: "3", rows: [{ ref: "A", verdict: "yes", subject: "", explanation: "" }, { ref: "B", verdict: "no", subject: "", explanation: "", rateNote: "n" }] },
+    { label: "4", rows: [{ ref: "C", verdict: "partial", subject: "", explanation: "" }, { ref: "D", verdict: "no", subject: "", explanation: "" }, { ref: "E", verdict: "na", subject: "", explanation: "" }] },
+  ]);
+  check(
+    "matrix summary: opens the first section WITH rows; counts across all; no refs named (no subjects); an N/A row adds the N/A tile; the cost index from rate notes",
+    [sum?.label, sum && matrixSummaryTiles(sum), sum && matrixNoLine(sum), sum?.costIndex, matrixSummaryOf([{ label: "1", rows: [] }])],
+    [
+      "3",
+      [
+        { value: "1", label: "of 5 items answered yes" },
+        { value: "1", label: "answered partial, with the reason given" },
+        { value: "2", label: "answered no" },
+        { value: "1", label: "answered N/A, not applicable" },
+      ],
+      "Answered no: B and D.",
+      [{ ref: "B", rateNote: "n" }],
+      null,
+    ]
+  );
+  {
+    // F5: the total is the CLIENT's items (a ref with no row still counts),
+    // no N/A tile without an n/a row, and the no line names each item by its
+    // subject with the ref after it.
+    const s2 = matrixSummaryOf(
+      [
+        { label: "3", rows: [{ ref: "A", verdict: "yes", subject: "Named people", explanation: "" }, { ref: "B", verdict: "no", subject: "No exit dependency.", explanation: "" }] },
+        { label: "4", rows: [{ ref: "D", verdict: "no", subject: "Fee not itemized", explanation: "" }] },
+      ],
+      [
+        { label: "3", ref: "A" },
+        { label: "3", ref: "B" },
+        { label: "3", ref: "C" },
+        { label: "4", ref: "D" },
+        { label: "4", ref: "E" },
+      ]
+    );
+    check(
+      "matrix summary F5: total from the client's refs (missing included), no N/A tile without an n/a row, the no line names refs with their subjects",
+      [s2 && matrixSummaryTiles(s2).map((t) => `${t.value} ${t.label}`), s2?.missing, s2 && matrixNoLine(s2), s2 && matrixMissingLine(s2)],
+      [
+        ["1 of 5 items answered yes", "0 answered partial, with the reason given", "2 answered no"],
+        2,
+        "Answered no: No exit dependency (B) and Fee not itemized (D).",
+        "2 items have no response yet; the checks name them.",
+      ]
+    );
+    check(
+      "allQuestionnaireRefs: every questionnaire section's refs in section then client order, SCOPED per section; a section under 3 refs is no questionnaire",
+      allQuestionnaireRefs(reqs.concat([{ id: "r6", structureLabel: "5", ordinal: 1, clientRef: "X-1" }, { id: "r7", structureLabel: "5", ordinal: 2, clientRef: "X-2" }, { id: "r8", structureLabel: "5", ordinal: 3, clientRef: "X-3" }])),
+      [
+        { label: "3", ref: "Q-01" },
+        { label: "3", ref: "Q-02" },
+        { label: "3", ref: "Q-03" },
+        { label: "5", ref: "X-1" },
+        { label: "5", ref: "X-2" },
+        { label: "5", ref: "X-3" },
+      ]
+    );
+    // The re-refute probe: two sections numbering their items identically.
+    // B's missing Q2 must count missing and block "every item".
+    const yesRow = (ref: string) => ({ ref, verdict: "yes" as const, subject: "", explanation: "" });
+    const dup = [
+      { label: "A", rows: [yesRow("Q1"), yesRow("Q2"), yesRow("Q3")] },
+      { label: "B", rows: [yesRow("Q1"), yesRow("Q3")] },
+    ];
+    const dupRefs = ["A", "B"].flatMap((label) => ["Q1", "Q2", "Q3"].map((ref) => ({ label, ref })));
+    const s3 = matrixSummaryOf(dup, dupRefs);
+    check(
+      "matrix summary: per-section numbering never dedupes across sections (total 6, missing 1, incomplete)",
+      [s3?.total, s3?.missing, matrixComplete(dup, dupRefs), s3 && matrixMissingLine(s3)],
+      [6, 1, false, "1 item has no response yet; the checks name it."]
+    );
+  }
+}
+{
+  const table: Record<string, string> = {};
+  for (const c of rateNoteCodes(RATE_CARD)) table[c] = rateNoteFor([c], RATE_CARD)!;
+  const sets = [["xl-secure-plus"], ["datto-setup", "datto-retention-1yr"], ["datto-retention-1yr", "nope", "datto-retention-1yr", "onboarding"], ["nope"], []];
+  check(
+    "rate notes: the workspace's table join equals quote.ts rateNoteFor over the seed card (the matrix row note is one string on every surface)",
+    sets.map((c) => rateNoteFromTable(c, table)),
+    sets.map((c) => rateNoteFor(c, RATE_CARD))
+  );
+}
+
+const r34Input = buildR34QuestionnaireInput();
+const r34 = resolveDraft(r34Input).resolved;
+const r34View = buildExportView(r34, RATE_CARD);
+const r34Echo = resolveDraft(buildR34EchoInput()).resolved;
+const r34EchoView = buildExportView(r34Echo, RATE_CARD);
+{
+  const matrices = r34.sections.map((s) => s.blocks.filter((b) => b.kind === "response-matrix"));
+  check(
+    "resolve: one response-matrix block per questionnaire section, closing its flow, rows in the client's order, llm with the answers' cites",
+    matrices.map((ms, i) => {
+      const m = ms[0];
+      const sec = r34.sections[i]!;
+      return m && m.kind === "response-matrix"
+        ? [ms.length, sec.blocks[sec.blocks.length - 1] === m, m.rows.map((r) => r.ref).join(","), m.generatedBy, m.cites.length > 0, m.id]
+        : null;
+    }),
+    [
+      [1, true, "OC-01,OC-02,OC-03,OC-04,OC-05,OC-06", "llm", true, "bm_1"],
+      [1, true, "AC-01,AC-02,AC-03,AC-04,AC-05", "llm", true, "bm_2"],
+    ]
+  );
+  const rows = matrices.flat().flatMap((b) => (b.kind === "response-matrix" ? b.rows : []));
+  check(
+    "resolve: the rate notes are the system's (rateNoteFor), on exactly the two rows that named codes",
+    rows.filter((r) => r.rateNote).map((r) => [r.ref, r.rateNote]),
+    [
+      ["OC-06", rateNoteFor(["xl-secure-plus"], RATE_CARD)],
+      ["AC-05", rateNoteFor(["datto-setup", "datto-retention-1yr"], RATE_CARD)],
+    ]
+  );
+  check(
+    "resolve: the summary precedes section 1 (6 yes, 3 partial, 2 no of 11), names both no items by subject and ref, indexes both rate notes",
+    [r34.matrixSummary?.label, r34.matrixSummary?.tiles.map((t) => t.value), r34.matrixSummary?.noLine, r34.matrixSummary?.costIndex.map((c) => c.ref)],
+    ["1", ["6", "3", "2"], "Answered no: Recovery in your own data center (OC-05) and No on-site access appliance (AC-03).", ["OC-06", "AC-05"]]
+  );
+  check(
+    "resolve: the roadmap sentence and the rfpTitle lede",
+    [r34.letter.roadmap, r34.cover.lede],
+    [
+      "In the pages that follow, Section 1 and Section 2 answer every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing.",
+      `Prepared for ${R34_CLIENT} in response to your ${R34_RFP_TITLE}.`,
+    ]
+  );
+  check(
+    "view: questionnaire kickers carry the ID range",
+    r34View.sections.map((s) => s.kicker),
+    ["Section 1 · OC-01 to OC-06", "Section 2 · AC-01 to AC-05"]
+  );
+  const spans = resolvedTextSpans(r34);
+  const fields = (loc: string) => spans.filter((sp) => sp.location === loc).map((sp) => sp.field);
+  check(
+    "spans: matrix rows scan as rows[i].ref/verdict/subject/explanation(/rateNote) with section and block ids; the summary under matrix-summary; the roadmap under letter",
+    [
+      fields("section:1").filter((f) => f.startsWith("rows[5]")),
+      spans.find((sp) => sp.field === "rows[0].verdict" && sp.location === "section:1")?.text,
+      spans.find((sp) => sp.field === "rows[0].ref" && sp.location === "section:1")?.blockId,
+      fields("matrix-summary"),
+      spans.some((sp) => sp.location === "letter" && sp.field === "roadmap"),
+    ],
+    [
+      ["rows[5].ref", "rows[5].verdict", "rows[5].subject", "rows[5].explanation", "rows[5].rateNote"],
+      "Yes",
+      "bm_1",
+      ["tiles[0].value", "tiles[0].label", "tiles[1].value", "tiles[1].label", "tiles[2].value", "tiles[2].label", "noLine", "costIndex[0].ref", "costIndex[0].rateNote", "costIndex[1].ref", "costIndex[1].rateNote"],
+      true,
+    ]
+  );
+  const echo = r34Echo.sections.flatMap((s) => s.blocks).find((b) => b.kind === "client-echo");
+  check(
+    "resolve (echo): the client-echo block lifts with its entries; echo spans are entries[i].title/said/saidBy/answer/willSee",
+    [
+      echo && echo.kind === "client-echo" ? echo.entries.map((e) => e.said) : null,
+      resolvedTextSpans(r34Echo).filter((sp) => sp.field.startsWith("entries[1]")).map((sp) => sp.field),
+    ],
+    [R34_ECHO_SAID, ["entries[1].title", "entries[1].said", "entries[1].saidBy", "entries[1].answer", "entries[1].willSee"]]
+  );
+  check(
+    "no round-34 furniture on the earlier fixtures (no matrix, no roadmap, no summary)",
+    [buildFixtureGateInput(), buildR32GateInput(), buildR33GateInput()].map((inp) => {
+      const r = resolveDraft(inp).resolved;
+      return [r.letter.roadmap ?? null, r.matrixSummary ?? null, r.sections.some((s) => s.blocks.some((b) => b.kind === "response-matrix"))];
+    }),
+    [[null, null, false], [null, null, false], [null, null, false]]
+  );
+  check(
+    "gate: the questionnaire and echo fixtures pass with no finding",
+    [runDraftGate(r34Input).violations.length, runDraftGate(buildR34EchoInput()).violations.length],
+    [0, 0]
+  );
 }
 
 // ---- one spec: both files carry the furniture ------------------------------------
@@ -874,6 +1284,73 @@ async function main() {
         [false, 4]
       );
     }
+  }
+
+
+  // ---- round 34: both files, questionnaire + echo (§5.17.22) ----------------------
+  {
+    const bare = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+    const { pages } = await pdfText(r34View);
+    const bp = pages.map(bare);
+    const dx = bare(await docxText(r34View));
+    const must = [
+      "Section 1 · OC-01 to OC-06",
+      "Section 2 · AC-01 to AC-05",
+      MATRIX_SUMMARY_CAPTION,
+      MATRIX_COST_CAPTION,
+      "of 11 items answered yes",
+      "Answered no: Recovery in your own data center (OC-05) and No on-site access appliance (AC-03).",
+      r34.letter.roadmap!,
+      `in response to your ${R34_RFP_TITLE}.`,
+      "PARTIAL",
+      rateNoteFor(["xl-secure-plus"], RATE_CARD)!,
+    ];
+    check("questionnaire: docx carries the kickers, summary, cost index, pills, roadmap and lede", must.filter((m) => !dx.includes(bare(m))), []);
+    check("questionnaire: pdf carries them too", must.filter((m) => !bp.join("").includes(bare(m))), []);
+    const sec1 = bp.findIndex((p) => p.includes(bare("Ownership, Control & Portability")) && p.includes(bare("Section 1 · OC-01")));
+    const cont = bp.findIndex((p, i) => i > sec1 && p.includes(bare(`Ownership, Control & Portability ${MATRIX_CONTINUED}`)));
+    check(
+      "questionnaire pdf: section 1's matrix carries onto a page titled '(continued)', with the head row again and the quiet continued kicker",
+      [sec1 >= 0, cont === sec1 + 1, bp[cont]?.includes(bare("IDResponseExplanation")) ?? false, bp[cont]?.includes(bare("Section 1 · OC-01 to OC-06 · continued")) ?? false],
+      [true, true, true, true]
+    );
+    const sumPage = bp.findIndex((p) => p.includes(bare(MATRIX_SUMMARY_TITLE)));
+    check(
+      "questionnaire pdf F6: the summary is its OWN sheet directly before section 1's (kicker, title, intro, cost index, then caption + tiles + no line), and section 1's sheet no longer carries it",
+      [
+        sumPage >= 0 && sumPage === sec1 - 1,
+        [MATRIX_SUMMARY_KICKER, MATRIX_SUMMARY_TITLE, "Each item in the pages that follow carries its ID", MATRIX_COST_CAPTION, MATRIX_SUMMARY_CAPTION, "of 11 items answered yes"].filter((m) => !(bp[sumPage] ?? "").includes(bare(m))),
+        (bp[sumPage] ?? "").indexOf(bare(MATRIX_COST_CAPTION)) < (bp[sumPage] ?? "").indexOf(bare(MATRIX_SUMMARY_CAPTION)),
+        bp[sec1]!.includes(bare(MATRIX_SUMMARY_CAPTION)),
+      ],
+      [true, [], true, false]
+    );
+    check(
+      "questionnaire docx F6: the summary sheet precedes section 1's head",
+      dx.indexOf(bare(MATRIX_SUMMARY_TITLE)) >= 0 && dx.indexOf(bare(MATRIX_SUMMARY_TITLE)) < dx.indexOf(bare("Section 1 · OC-01 to OC-06")),
+      true
+    );
+    check(
+      "questionnaire pdf: the letter's roadmap sits before its pricing paragraph",
+      [
+        (() => {
+          const all = bp.join("");
+          return all.indexOf(bare(r34.letter.roadmap!)) < all.indexOf(bare(r34.letter.pricingParagraph!));
+        })(),
+      ],
+      [true]
+    );
+    const xml = await (await JSZip.loadAsync(await renderRfpDocx(r34View))).file("word/document.xml")!.async("string");
+    check("questionnaire docx: the matrix head row repeats (tblHeader) and its rows never split (cantSplit)", [/<w:tblHeader\/>/.test(xml), (xml.match(/<w:cantSplit\/>/g) ?? []).length >= 11], [true, true]);
+
+    const { pages: ep } = await pdfText(r34EchoView);
+    const ex = bare(ep.join(""));
+    const edx = bare(await docxText(r34EchoView));
+    const echoTitles = (r34Echo.sections.flatMap((x) => x.blocks).find((b) => b.kind === "client-echo") as { entries: { title?: string }[] } | undefined)?.entries.map((e) => e.title ?? "") ?? [];
+    check("echo F10: the fixture's entries carry their sub-heads", echoTitles.every((t) => t.length > 0) && echoTitles.length === 3, true);
+    const echoMust = [...R34_ECHO_SAID.map(echoQuote), R34_ECHO_BY, ECHO_TOLD_LABEL, ECHO_SEE_TITLE, ...echoTitles];
+    check("echo: both files carry every verbatim quote, the attribution, and the chrome", [echoMust.filter((m) => !edx.includes(bare(m))), echoMust.filter((m) => !ex.includes(bare(m)))], [[], []]);
+    check("echo: no roadmap without a matrix", r34Echo.letter.roadmap ?? null, null);
   }
 
   // ---- round 33: a REAL RFP is byte-identical -------------------------------------

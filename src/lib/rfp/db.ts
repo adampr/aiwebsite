@@ -541,6 +541,8 @@ export async function replaceRequirements(
     ordinal: number;
     kind: string;
     mandatory: boolean;
+    /** Round 34: the grounded client item ID, or null/absent (stored NULL). */
+    clientRef?: string | null;
   }[]
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -550,7 +552,9 @@ export async function replaceRequirements(
     if (rows.length)
       await tx
         .insert(rfpRequirements)
-        .values(rows.map((r) => ({ ...r, documentId })));
+        .values(
+          rows.map((r) => ({ ...r, clientRef: r.clientRef ?? null, documentId }))
+        );
   });
 }
 

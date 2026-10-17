@@ -28,7 +28,14 @@ import {
   groupFixPlan,
   isAutoFixable,
   isAutoFixableGroup,
+  isMatrixFurnitureLocator,
+  isMatrixRowLocator,
   isReferenceCardBlockId,
+  MATRIX_FIX_MESSAGE,
+  MATRIX_FURNITURE_FIX_MESSAGE,
+  MATRIX_TEXT_FIX_MESSAGE,
+  ECHO_QUOTE_FIX_MESSAGE,
+  isEchoQuoteLocator,
   REFERENCE_CARD_FIX_MESSAGE,
   resolveTargetLabel,
   sectionIdForLabel,
@@ -821,6 +828,98 @@ check("fixAll: nothing visible, nothing to do", fixAllSteps([], ctx), []);
   const stamped: GateResult = { ...result([a6One]), atRev: 7 };
   check("applyIgnores preserves atRev", applyIgnores(stamped, [ign(findingSig(a6One))]).atRev, 7);
   check("applyIgnores adds no atRev to a pre-round row", "atRev" in applyIgnores(result([a6One]), []), false);
+}
+
+// ---- the questionnaire response matrix (§5.17.22, round 34) -----------------
+// No special-casing in findingSig or grouping: a matrix row locator is an
+// ordinary sectionId + blockId + field, so each row's finding has its own
+// signature (an Ignore on one row never hides another) and the persisted
+// format is untouched. Recipes: D7 redrafts, D8/D9 and any other rule on a
+// matrix row are a person's call, the summary furniture likewise.
+
+{
+  const mx = (i: number, field?: string): Violation["locator"] => ({
+    sectionId: "sec_5_",
+    blockId: "bv_5__matrix",
+    field: field ? `rows[${i}].${field}` : `rows[${i}]`,
+  });
+  const d9a = viol({ ruleId: "D9", severity: "block", message: 'Response row OC-02 in section 5. has no valid answer ("maybe"), so it would print as a blank pill. The answer must be yes, partial, no or n/a.', locator: mx(1, "verdict") });
+  const d9b = viol({ ruleId: "D9", severity: "block", message: d9a.message, locator: mx(3, "verdict") });
+  check(
+    "matrix sig: the persisted format, with the row's field in the field slot",
+    findingSig(d9a),
+    ["D9", "sec_5_", "bv_5__matrix", "rows[1].verdict", "", "", "", d9a.message].join("\u0000")
+  );
+  check("matrix sig: two rows, two signatures (an Ignore names one row)", findingSig(d9a) === findingSig(d9b), false);
+  check("matrix sig: deterministic", findingSig(d9a) === findingSig({ ...d9a }), true);
+  check("matrix grouping: same rule and message on two rows is one group of two", groupFindings([d9a, d9b]).map((g) => g.members.length), [2]);
+  const ctx = { sections: [{ label: "5." }, { label: "6." }], requirements: [] };
+  check("D9 recipe: none, the honest matrix message", fixRecipe(d9a, ctx), { kind: "none", message: MATRIX_FIX_MESSAGE });
+  const d8 = viol({ ruleId: "D8", severity: "warn", message: "Section 5.'s response rows are out of the client's order: OC-01 comes after OC-02.", locator: mx(1) });
+  check("D8 recipe: none, the honest matrix message", fixRecipe(d8, ctx), { kind: "none", message: MATRIX_FIX_MESSAGE });
+  check("D8/D9 group: not auto-fixable (Fix all leaves them to the person)",
+    isAutoFixableGroup(groupFindings([d8])[0], ctx) || isAutoFixableGroup(groupFindings([d9a, d9b])[0], ctx), false);
+  const d7 = viol({ ruleId: "D7", severity: "warn", message: "Section 5. has no response row for 2 of the client's 6 items: OC-03, OC-04.", locator: { sectionId: "sec_5_", blockId: "bv_5__matrix" } });
+  check("D7 recipe: a redraft of the section", fixRecipe(d7, ctx), { kind: "redraft", label: "5.", why: d7.message });
+  check("D7 Fix all: the redraft is planned, once", fixAllSteps(groupFindings([d7]), ctx), [{ kind: "redraft", label: "5.", why: d7.message }]);
+  check("D7 Fix all: a label already rebuilt is not redrafted again", fixAllSteps(groupFindings([d7]), ctx, { noRedraft: new Set(["5."]) }), []);
+  const d7Undrafted = viol({ ...d7, locator: { sectionId: "sec_7_" } });
+  check("D7 recipe: no drafted section to rebuild is a plain message", fixRecipe(d7Undrafted, ctx), { kind: "none", message: MATRIX_FIX_MESSAGE });
+  // Any other rule on a matrix row's text: Tron cannot reach it.
+  const d1 = viol({ ruleId: "D1", severity: "block", message: "Em dash (U+2014) in output. Replace with a period, comma, colon, or parentheses.", locator: { ...mx(2, "explanation"), charOffset: 4 } });
+  check("D1 on a matrix explanation: none, never a Tron run", fixRecipe(d1, ctx), { kind: "none", message: MATRIX_TEXT_FIX_MESSAGE });
+  const b7 = viol({ ruleId: "B7", severity: "block", message: '"$500" appears in section but the pricing engine did not produce it.', locator: { blockId: "bv_5__matrix", field: "rows[0].subject" } });
+  check("B7 on a matrix subject: none", fixRecipe(b7, ctx), { kind: "none", message: MATRIX_TEXT_FIX_MESSAGE });
+  check("isMatrixRowLocator: a table cell rows[i][j] is NOT a matrix row", isMatrixRowLocator({ blockId: "bv_2__v_0000a001", field: "rows[3][2]" }), false);
+  check("isMatrixRowLocator: rows[i].explanation is", isMatrixRowLocator(mx(0, "explanation")), true);
+  // The summary furniture: no section, no block.
+  const sum = viol({ ruleId: "D2", severity: "warn", message: '"robust" reads as machine-written.', locator: { field: "costIndex[0].rateNote", charOffset: 0 } });
+  check("summary furniture: none", fixRecipe(sum, ctx), { kind: "none", message: MATRIX_FURNITURE_FIX_MESSAGE });
+  check("summary furniture: a stat-tiles BLOCK's tiles[i].label is not furniture",
+    isMatrixFurnitureLocator({ sectionId: "sec_3_", blockId: "bv_3__v_0000a003", field: "tiles[0].label" }), false);
+  check("letter roadmap: none", fixRecipe(viol({ ruleId: "A1", severity: "block", locator: { field: "roadmap", charOffset: 0 } }), ctx).kind, "none");
+  // C3 on a client item with no matrix row: a redraft when the ctx carries
+  // clientRefs (>= 3 distinct on the label), the old Tron recipe otherwise.
+  const reqs = ["OC-01", "OC-02", "OC-03"].map((ref, i) => ({ id: `r${i}`, structureLabel: "5.", clientRef: ref }));
+  const c3 = viol({ ruleId: "C3", severity: "block", message: 'Requirement 2 (5.) is not answered anywhere: "Item"', locator: { requirementId: "r1" } });
+  check("C3 on a matrix gap: a redraft", fixRecipe(c3, { ...ctx, requirements: reqs }), { kind: "redraft", label: "5.", why: c3.message });
+  const plain = fixRecipe(c3, { ...ctx, requirements: reqs.map(({ id, structureLabel }) => ({ id, structureLabel })) });
+  check("C3 without clientRefs: the Tron recipe, byte-identical to before", [plain.kind, plain.kind === "tron" ? plain.label : null, plain.kind === "tron" ? plain.ask : null],
+    ["tron", "5.", { prompt: "Optional: anything Tron should use to answer this requirement." }]);
+  const two = fixRecipe(c3, { ...ctx, requirements: reqs.slice(0, 2) });
+  check("C3 with only two refs on the label (not questionnaire-mode): the Tron recipe", two.kind, "tron");
+  check("matrix messages carry no em dash",
+    [MATRIX_FIX_MESSAGE, MATRIX_TEXT_FIX_MESSAGE, MATRIX_FURNITURE_FIX_MESSAGE, ECHO_QUOTE_FIX_MESSAGE].some((m) => m.includes("\u2014")), false);
+  check("F8: the matrix message is staff-honest (redraft from the sheet), with no CLI instruction",
+    [/Redraft/.test(MATRIX_FIX_MESSAGE), /npm|rfp:reread/.test(MATRIX_FIX_MESSAGE)], [true, false]);
+
+  // M3: ANY rule's finding on a client-echo quote or its attribution is
+  // {kind: "none"}: the client's verbatim words never reach a Tron
+  // instruction, alone or grouped with a paragraph finding.
+  const echoLoc = (field: string) => ({ sectionId: "sec_2", blockId: "bv_2_v_0000e001", field, charOffset: 10 });
+  const QUOTE = "Our provider locked us in; we want month-to-month.";
+  const a1 = viol({ ruleId: "A1", severity: "block", message: "Forbidden contract-term claim", excerpt: QUOTE, locator: echoLoc("entries[0].said") });
+  const a3 = viol({ ruleId: "A3", severity: "block", message: "Forbidden staffing claim", excerpt: "We require an entirely domestic team", locator: echoLoc("entries[1].said") });
+  const d2 = viol({ ruleId: "D2", severity: "warn", message: '"world-class" reads as machine-written.', excerpt: "We want a world-class help desk.", locator: echoLoc("entries[2].said") });
+  const by = viol({ ruleId: "D2", severity: "warn", message: '"robust" reads as machine-written.', excerpt: "Robust Ops Team", locator: echoLoc("entries[0].saidBy") });
+  const ectx = { sections: [{ label: "2" }], requirements: [] };
+  check(
+    "M3: A1, A3, D2 on an echo quote and D2 on its attribution are all none with the quote message",
+    [a1, a3, d2, by].map((v) => fixRecipe(v, ectx)),
+    [a1, a3, d2, by].map(() => ({ kind: "none", message: ECHO_QUOTE_FIX_MESSAGE }))
+  );
+  check("M3: isEchoQuoteLocator matches said/saidBy only (answer, willSee and a matrix row are not quotes)",
+    [echoLoc("entries[3].said"), echoLoc("entries[3].saidBy"), echoLoc("entries[3].answer"), echoLoc("entries[3].willSee"), echoLoc("rows[0].explanation"), { field: "entries[x].said" }].map(isEchoQuoteLocator),
+    [true, true, false, false, false, false]);
+  const para = viol({ ruleId: "A1", severity: "block", message: "Forbidden contract-term claim", excerpt: "XL.net offers month-to-month terms.", locator: { sectionId: "sec_2", blockId: "b_2_0001" } });
+  const plan = groupFixPlan(groupFindings([a1, para])[0]!, ectx);
+  const instr = plan.filter((p) => p.kind === "tron").map((p) => (p.kind === "tron" ? p.instruction : "")).join(" ");
+  check(
+    "M3: grouped with a paragraph finding, only the paragraph reaches Tron; the client's quote is in no instruction, and a Fix all never sends it",
+    [plan.map((p) => p.kind).sort(), instr.includes(QUOTE), instr.includes("XL.net offers month-to-month terms."), JSON.stringify(fixAllSteps(groupFindings([a1, d2]), ectx)).includes("month-to-month")],
+    [["none", "tron"], false, true, false]
+  );
+  check("M3: a quote-only group is not auto-fixable", isAutoFixableGroup(groupFindings([d2])[0]!, ectx), false);
 }
 
 if (failures) {

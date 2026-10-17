@@ -9,7 +9,7 @@
  * This is the type that makes cross-format parity structural rather than a diffing script.
  */
 
-import { blockTextSpans, type Block } from "./blocks";
+import { blockTextSpans, type Block, type StatTile } from "./blocks";
 import type { Finding } from "./audit";
 import type { Fact, Reference } from "./knowledge";
 import type { DensityMode } from "./page-budget";
@@ -69,6 +69,11 @@ export type ResolvedLetter = {
    *  keeps a finding on it out of the letter's Fix-it route. ABSENT when
    *  pricing is not ready. */
   pricingParagraph?: string;
+  /** The SYSTEM roadmap sentence (furniture.ts letterRoadmapSentence,
+   *  §5.17.22), printed directly before the pricing paragraph. Composed on
+   *  every resolve from what the document holds, never stored, never
+   *  Tron-editable. ABSENT unless a section carries a response matrix. */
+  roadmap?: string;
   closing: string;
   signature: ResolvedSignature;
 };
@@ -122,6 +127,26 @@ export type ResolvedProposal = {
      *  holds pricing, else null. */
     pricingKicker: string | null;
   }[];
+  /** The questionnaire summary (§5.17.22) on its own Overview sheet before
+   *  the FIRST response-matrix section's sheet, `label` naming that
+   *  section: the verdict tiles (yes / partial / no across every matrix
+   *  section, plus an N/A tile when any row is n/a; the total counts every
+   *  client item, answered or not, per section), the line naming the items
+   *  answered no by their screened subjects, the missing-items honesty
+   *  line, and the added-cost index (ref | system rate note). Composed by
+   *  resolve-draft from the stored rows through furniture.ts; the subjects
+   *  in the no line are screened model text, everything else is system
+   *  copy. ABSENT when no section carries a matrix. Presentation of rows
+   *  the hash already covers, so outside the content hash. */
+  matrixSummary?: {
+    label: string;
+    tiles: StatTile[];
+    noLine: string | null;
+    /** Honesty line when client items have no row yet, so the tile counts
+     *  visibly need not sum to the total; null when complete. */
+    missingLine: string | null;
+    costIndex: { ref: string; rateNote: string }[];
+  };
   /** Hash of this content model. Two artifacts of the same proposal must share it (rule C2). */
   contentHash: string;
 };
@@ -168,6 +193,10 @@ export function resolvedTextSpans(
   if (resolved.letter.pricingParagraph) {
     spans.push({ location: "letter", field: "pricingParagraph", text: resolved.letter.pricingParagraph });
   }
+  // Round 34 (§5.17.22): system text, its own field like pricingParagraph.
+  if (resolved.letter.roadmap) {
+    spans.push({ location: "letter", field: "roadmap", text: resolved.letter.roadmap });
+  }
   spans.push(
     { location: "letter", field: "salutation", text: resolved.letter.salutation },
     { location: "letter", field: "closing", text: resolved.letter.closing },
@@ -205,6 +234,25 @@ export function resolvedTextSpans(
     spans.push({ location: "parts", field: `part[${part.n}].title`, text: part.title });
     if (part.dek) spans.push({ location: "parts", field: `part[${part.n}].dek`, text: part.dek });
   });
+
+  // The questionnaire summary (§5.17.22): system furniture on the first
+  // matrix section's sheet, under its own location (no sectionId, no
+  // blockId) so no section Fix-it route claims a finding on it. The cost
+  // index's rate notes are the rows' own system text (rule B7 sanctions
+  // `costIndex[i].rateNote` exactly as it does a row's `rows[i].rateNote`).
+  if (resolved.matrixSummary) {
+    const ms = resolved.matrixSummary;
+    ms.tiles.forEach((t, i) => {
+      spans.push({ location: "matrix-summary", field: `tiles[${i}].value`, text: t.value });
+      spans.push({ location: "matrix-summary", field: `tiles[${i}].label`, text: t.label });
+    });
+    if (ms.noLine) spans.push({ location: "matrix-summary", field: "noLine", text: ms.noLine });
+    if (ms.missingLine) spans.push({ location: "matrix-summary", field: "missingLine", text: ms.missingLine });
+    ms.costIndex.forEach((c, i) => {
+      spans.push({ location: "matrix-summary", field: `costIndex[${i}].ref`, text: c.ref });
+      spans.push({ location: "matrix-summary", field: `costIndex[${i}].rateNote`, text: c.rateNote });
+    });
+  }
 
   spans.push({ location: "back-cover", field: "headline", text: resolved.backCover.headline });
   if (resolved.backCover.subhead) {

@@ -26,11 +26,14 @@ import {
   resolvedTextSpans,
   type Block,
 } from "../src/lib/rfp/content-model";
-import { runGate } from "../src/lib/rfp/validators/gate";
-import { D6, prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import { RULE_IDS, runGate } from "../src/lib/rfp/validators/gate";
+import { D6, D7, D8, D9, prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import { compressRefs, matrixRowGaps, withMatrixCoverage } from "../src/lib/rfp/validators/matrix";
 import {
   D6_LETTER_DIRECTION,
   D6_TABLE_DIRECTION,
+  MATRIX_FIX_MESSAGE,
+  MATRIX_TEXT_FIX_MESSAGE,
   fixAllSteps,
   fixRecipe,
   groupFindings,
@@ -384,6 +387,7 @@ function visibleStrings(b: DraftBlock): string[] {
     case "cards": return b.cards.flatMap((c) => [c.title, c.body, ...(c.footnote ? [c.footnote] : [])]);
     case "timeline": return b.steps.flatMap((s) => [s.label, s.title, s.body]);
     case "references": return referencesBlockStrings(b.references);
+    case "client-echo": return b.entries.flatMap((e) => [e.said, ...(e.saidBy ? [e.saidBy] : []), e.answer, ...(e.willSee ? [e.willSee] : [])]);
   }
 }
 
@@ -633,6 +637,198 @@ function visibleStrings(b: DraftBlock): string[] {
   check("D6 Fix all: auto-fixable, and the round plans its step",
     isAutoFixableGroup(groups[0], fixCtx) &&
       fixAllSteps(groups, fixCtx).some((s) => s.kind === "tron" && s.instruction.includes(D6_LETTER_DIRECTION)));
+}
+
+/* ---- 4d. The questionnaire response matrix: D7 / D8 / D9 and Coverage (round 34) */
+// Hand-built contexts on the resolved fixture: the requirements gain client
+// item IDs on one section and that section gains a host-built matrix block.
+// Pins completeness (one row per ID, missing named, runs compressed),
+// order (the first out-of-order ID), the verdict enum (block, at the row),
+// the coverage post-pass, recipes, B7's rateNote field sanction, hostile
+// shapes, and that a document with no client IDs is untouched.
+{
+  const Q = "6.";
+  const qBase = resolved.sections.find((s) => s.structureLabel === Q);
+  check("matrix: the fixture has a drafted section 6. to carry a matrix", !!qBase && qBase.blocks.length > 0);
+  const qSecId = qBase!.id;
+  const REFS = ["OC-01", "OC-02", "OC-03", "OC-04", "OC-05", "OC-06"];
+  const qReq = (ref: string, i: number, extra: Record<string, unknown> = {}) => ({
+    id: `req_q_${i}`, rfpId: requirements[0]?.rfpId ?? "doc", structureLabel: Q, text: `Client item ${ref}.`,
+    ordinal: 500 + i, kind: "factual" as const, mandatory: true, clientRef: ref, ...extra,
+  });
+  // OC-03 is one numbered ask extracted as two atomic requirements: one row answers both.
+  const qReqs = [...requirements, ...REFS.map((r, i) => qReq(r, i)), qReq("OC-03", 9, { ordinal: 502.5 })];
+  const row = (ref: string, verdict: unknown = "yes", extra: Record<string, unknown> = {}) =>
+    ({ ref, verdict, subject: `Subject ${ref}`, explanation: `We answer ${ref} directly.`, ...extra });
+  const MATRIX_ID = "bv_6__matrix";
+  const withMatrix = (rows: unknown, opts: { requirements?: unknown[]; noBlock?: boolean } = {}) => {
+    const copy = structuredClone(resolved);
+    const sec = copy.sections.find((s) => s.structureLabel === Q)!;
+    if (!opts.noBlock)
+      sec.blocks.push({ kind: "response-matrix", id: MATRIX_ID, sectionId: qSecId, ordinal: sec.blocks.length,
+        cites: [], generatedBy: "system", editedByHuman: false, rows } as unknown as Block);
+    return { proposal: copy, knowledge, rateCard: input.rateCard, requirements: (opts.requirements ?? qReqs) as typeof requirements,
+      coverage, factsById, statesHeadcountOnly: false, supportedUserSplitConfirmed: true };
+  };
+  const only = (c: ReturnType<typeof withMatrix>, ids = ["D7", "D8", "D9"]) => runGate(c, { only: ids });
+
+  // Complete and ordered: nothing.
+  const clean = only(withMatrix(REFS.map((r) => row(r))));
+  check("matrix: a complete, ordered matrix raises no D7/D8/D9 and no validator error",
+    clean.violations.length === 0 && clean.errors.length === 0, [clean.violations.map((v) => v.message), clean.errors]);
+  check("matrix: D7, D8, D9 registered right after D6, warn / warn / block",
+    RULE_IDS.indexOf("D7") === RULE_IDS.indexOf("D6") + 1 && RULE_IDS.indexOf("D8") === RULE_IDS.indexOf("D7") + 1 &&
+      RULE_IDS.indexOf("D9") === RULE_IDS.indexOf("D8") + 1 &&
+      D7.severity === "warn" && D8.severity === "warn" && D9.severity === "block", RULE_IDS);
+
+  // D7 missing, named.
+  const miss = only(withMatrix([row("OC-01"), row("OC-02"), row("OC-05")])).violations;
+  check("D7: missing IDs are ONE warn per section, named in client order, located on the section and block",
+    miss.length === 1 && miss[0].ruleId === "D7" && miss[0].severity === "warn" &&
+      miss[0].message === "Section 6. has no response row for 3 of the client's 6 items: OC-03, OC-04, OC-06." &&
+      isDeepStrictEqual(miss[0].locator, { sectionId: qSecId, blockId: MATRIX_ID }) &&
+      /Redraft the section/.test(miss[0].suggestion ?? ""),
+    miss);
+  const noBlock = only(withMatrix(null, { noBlock: true })).violations;
+  check("D7: a drafted questionnaire section with no matrix names every ID as a run",
+    noBlock.length === 1 && noBlock[0].message === "Section 6. has no response matrix, so none of the client's 6 items has a row: OC-01 to OC-06." &&
+      isDeepStrictEqual(noBlock[0].locator, { sectionId: qSecId }),
+    noBlock);
+  // Twenty missing: runs compress, the list caps and counts the rest.
+  const order30 = Array.from({ length: 30 }, (_, i) => `Q-${String(i + 1).padStart(2, "0")}`);
+  check("D7 list: 20 missing in two runs reads as two runs",
+    compressRefs(order30.slice(0, 20).filter((r) => r !== "Q-10"), order30) === "Q-01 to Q-09, Q-11 to Q-20",
+    compressRefs(order30.slice(0, 20).filter((r) => r !== "Q-10"), order30));
+  check("D7 list: 15 scattered IDs show 8 and count the rest",
+    compressRefs(order30.filter((_, i) => i % 2 === 0), order30) === "Q-01, Q-03, Q-05, Q-07, Q-09, Q-11, Q-13, Q-15 and 7 more",
+    compressRefs(order30.filter((_, i) => i % 2 === 0), order30));
+  check("D7 list: a run of two stays two names", compressRefs(["Q-01", "Q-02"], order30) === "Q-01, Q-02", compressRefs(["Q-01", "Q-02"], order30));
+
+  // D7 duplicate and foreign rows, located at the row.
+  const dup = only(withMatrix([row("OC-01"), row("OC-01"), row("OC-02"), row("OC-03"), row("OC-04"), row("OC-05"), row("OC-06"), row("ZZ-9")])).violations;
+  check("D7: a second row for one ID is flagged at that row",
+    dup.some((v) => v.ruleId === "D7" && v.message === "Section 6. answers item OC-01 in more than one row; each client item needs exactly one." &&
+      isDeepStrictEqual(v.locator, { sectionId: qSecId, blockId: MATRIX_ID, field: "rows[1]" })),
+    dup);
+  check("D7: a row for an ID that is not this section's item is flagged at that row",
+    dup.some((v) => v.ruleId === "D7" && /has a response row for ZZ-9, which is not one of this section's client items/.test(v.message) &&
+      v.locator.field === "rows[7]") && dup.filter((v) => v.ruleId === "D7").length === 2 && !dup.some((v) => v.ruleId === "D8"),
+    dup);
+
+  // D8 order.
+  const ord = only(withMatrix([row("OC-02"), row("OC-01"), row("OC-04"), row("OC-03"), row("OC-05"), row("OC-06")])).violations;
+  check("D8: ONE warn naming the first row out of order, located at it",
+    ord.length === 1 && ord[0].ruleId === "D8" && ord[0].severity === "warn" &&
+      ord[0].message === "Section 6.'s response rows are out of the client's order: OC-01 comes after OC-02." &&
+      ord[0].locator.field === "rows[1]",
+    ord);
+
+  // D9 the verdict enum, block, at the row.
+  const bad = only(withMatrix([row("OC-01", "maybe"), row("OC-02", null), row("OC-03", 7), null, row("OC-04", "na"), row("OC-05", "partial"), row("OC-06", "no")])).violations;
+  const d9 = bad.filter((v) => v.ruleId === "D9");
+  check("D9: every corrupt row is a BLOCK at rows[i].verdict, naming what is stored",
+    d9.length === 4 && d9.every((v) => v.severity === "block") &&
+      isDeepStrictEqual(d9.map((v) => v.locator.field), ["rows[0].verdict", "rows[1].verdict", "rows[2].verdict", "rows[3]"]) &&
+      d9[0].message === 'Response row OC-01 in section 6. has no valid answer ("maybe"), so it would print as a blank pill. The answer must be yes, partial, no or n/a.' &&
+      /\(none stored\)/.test(d9[1].message) && /\(not text\)/.test(d9[2].message) &&
+      d9[3].message === "Response row 4 in section 6. has no item ID, so it would print with a blank ID.",
+    d9.map((v) => [v.locator.field, v.message]));
+  check("D9: the gate does not pass on a corrupt verdict", !runGate(withMatrix([row("OC-01", "Y")])).passed);
+
+  // A matrix on a section that is NOT questionnaire-mode: unusual, not a D7/D8 violation; D9 still reads it.
+  const twoRefs = [...requirements, qReq("OC-01", 0), qReq("OC-02", 1)];
+  const notQ = only(withMatrix([row("OC-02"), row("OC-01", "huh")], { requirements: twoRefs })).violations;
+  check("matrix on a non-questionnaire section: no D7/D8, D9 still blocks its corrupt row",
+    !notQ.some((v) => v.ruleId === "D7" || v.ruleId === "D8") && notQ.filter((v) => v.ruleId === "D9").length === 1, notQ.map((v) => v.message));
+  // An undrafted questionnaire section is C3's, not D7's.
+  const undrafted = only(withMatrix([], { requirements: [...requirements, ...["X-1", "X-2", "X-3"].map((r, i) => ({ ...qReq(r, i), structureLabel: "99." }))] })).violations;
+  check("D7: an undrafted questionnaire section is not judged (C3 already counts it uncovered)",
+    !undrafted.some((v) => v.message.includes("Section 99.")), undrafted.map((v) => v.message));
+
+  // Hostile shapes never throw.
+  const hostileCtxs = [
+    withMatrix("rows"),
+    withMatrix([1, "x", [], { ref: 5, verdict: "yes" }, { ref: "  ", verdict: "no" }, { ref: "OC-01—x", verdict: "—" }]),
+    withMatrix(REFS.map((r) => row(r)), { requirements: [null, { structureLabel: Q, clientRef: 42 }, ...qReqs] }),
+    withMatrix([{ ref: "OC-01" }], { requirements: qReqs.map((r) => ({ ...r, ordinal: Number.NaN })) }),
+  ];
+  const hostileRuns = hostileCtxs.map((c) => only(c));
+  check("matrix: hostile rows, refs and requirements never throw (no validator error)",
+    hostileRuns.every((r) => r.errors.length === 0), hostileRuns.map((r) => r.errors));
+  check("matrix: no em dash reaches a message, even from a hostile stored ref or verdict",
+    hostileRuns.every((r) => r.violations.every((v) => !(v.message + (v.suggestion ?? "")).includes("—"))),
+    hostileRuns.flatMap((r) => r.violations.map((v) => v.message)));
+
+  // Coverage: the post-pass over the one computation.
+  check("coverage: a document with no client IDs gets back the SAME coverage array",
+    withMatrixCoverage(coverage, requirements, resolved.sections) === coverage);
+  const missCtx = withMatrix([row("OC-01"), row("OC-02"), row("OC-04"), row("OC-05")]);
+  const baseCov = [...coverage, ...qReqs.filter((r) => r.structureLabel === Q && "clientRef" in r)
+    .map((r) => ({ requirementId: r.id, sectionId: qSecId, state: "covered" as const, note: null }))];
+  const cov = withMatrixCoverage(baseCov, qReqs, missCtx.proposal.sections);
+  const covOf = (id: string) => cov.find((c) => c.requirementId === id);
+  check("coverage: every requirement carrying a missing ID is uncovered with a note (both OC-03 halves, and OC-06)",
+    isDeepStrictEqual(["req_q_2", "req_q_9", "req_q_5"].map((id) => [covOf(id)?.state, covOf(id)?.note]),
+      [["uncovered", "No response row for item OC-03."], ["uncovered", "No response row for item OC-03."], ["uncovered", "No response row for item OC-06."]]) &&
+      covOf("req_q_0")?.state === "covered",
+    cov.slice(coverage.length));
+  check("coverage: requirements without IDs are untouched, in order",
+    isDeepStrictEqual(cov.slice(0, coverage.length), coverage));
+  check("matrixRowGaps: the pane's adapter (stored answers) agrees with the gate's (resolved rows)",
+    isDeepStrictEqual([...matrixRowGaps(qReqs, (l) => (l === Q ? [{ ref: "OC-01" }, { ref: "OC-02" }, { ref: "OC-04" }, { ref: "OC-05" }] : null)).keys()].sort(),
+      ["req_q_2", "req_q_5", "req_q_9"]));
+  // C3 reads coverage: a MANDATORY client item with no row is also a C3 block (by design, contract Q1e).
+  const c3 = runGate({ ...missCtx, coverage: cov }, { only: ["C3"] }).violations.filter((v) => v.locator.requirementId?.startsWith("req_q_"));
+  check("coverage -> C3: the mandatory items with no row are C3 blocks; the answered ones are not",
+    isDeepStrictEqual(c3.map((v) => [v.locator.requirementId, v.severity]).sort(), [["req_q_2", "block"], ["req_q_5", "block"], ["req_q_9", "block"]]),
+    c3.map((v) => v.locator));
+
+  // Recipes through the real findings.
+  const fixCtx = { sections: input.sections.map((s) => ({ label: s.label })), requirements: qReqs };
+  const missRecipe = fixRecipe(miss[0], fixCtx);
+  check("D7 recipe: a redraft of section 6.", missRecipe.kind === "redraft" && missRecipe.label === Q, missRecipe);
+  check("D8/D9 recipes: none, the honest matrix message",
+    fixRecipe(ord[0], fixCtx).kind === "none" && fixRecipe(d9[0], fixCtx).kind === "none" &&
+      (fixRecipe(d9[0], fixCtx) as { message: string }).message === MATRIX_FIX_MESSAGE);
+  const c3Recipe = fixRecipe(c3[0], fixCtx);
+  check("C3 recipe on a matrix gap: a redraft of the section (Tron cannot add a row)",
+    c3Recipe.kind === "redraft" && c3Recipe.label === Q, c3Recipe);
+
+  // The existing rules scan the matrix spans, and their recipes stop at the row.
+  const emRows = REFS.map((r) => row(r));
+  emRows[2] = row("OC-03", "yes", { explanation: "Yes — we do." });
+  const em = runGate(withMatrix(emRows), { only: ["D1"] }).violations;
+  check("D1 fires inside a matrix explanation, located at rows[2].explanation, and its recipe is not a Tron run",
+    em.length === 1 && isDeepStrictEqual(em[0].locator, { sectionId: qSecId, blockId: MATRIX_ID, field: "rows[2].explanation", charOffset: 4 }) &&
+      fixRecipe(em[0], fixCtx).kind === "none" && (fixRecipe(em[0], fixCtx) as { message: string }).message === MATRIX_TEXT_FIX_MESSAGE,
+    em);
+  // B7: a rate-card figure is sanctioned in a rateNote ONLY; a figure the card does not state never is.
+  const rateRows = REFS.map((r) => row(r));
+  rateRows[0] = row("OC-01", "partial", { rateNote: "Datto archive license: $2.50 per user per month" });
+  rateRows[1] = row("OC-02", "yes", { explanation: "The archive license is $2.50 per user per month." });
+  rateRows[2] = row("OC-03", "partial", { rateNote: "Something: $7 per month" });
+  const b7 = runGate(withMatrix(rateRows), { only: ["B7"] }).violations;
+  check("B7: a rate-card figure in rows[i].rateNote passes; the same figure in an explanation blocks; an unstated figure in a rateNote blocks",
+    isDeepStrictEqual(b7.map((v) => [v.excerpt, v.locator.field]).sort(), [["$2.50", "rows[1].explanation"], ["$7", "rows[2].rateNote"]]),
+    b7.map((v) => [v.excerpt, v.locator]));
+  check("B7 on a matrix row: the recipe is not a Tron run", b7.every((v) => fixRecipe(v, fixCtx).kind === "none"));
+
+  // Regression: on the fixture (no client IDs) the new rules add nothing and
+  // the old rules' output is byte-identical with or without them.
+  const all = runDraftGate(input);
+  const without = runGate({ proposal: resolved, knowledge, rateCard: input.rateCard, requirements, coverage, factsById,
+    statesHeadcountOnly: false, supportedUserSplitConfirmed: true }, { only: RULE_IDS.filter((id) => !["D7", "D8", "D9"].includes(id)) });
+  check("regression: no client IDs, no matrix: D7/D8/D9 silent and every other rule byte-identical",
+    !all.violations.some((v) => ["D7", "D8", "D9"].includes(v.ruleId)) &&
+      canonicalJson(all.violations) === canonicalJson(without.violations) && all.errors.length === 0,
+    all.violations.filter((v) => ["D7", "D8", "D9"].includes(v.ruleId)));
+  check("regression: B7 locators off the matrix carry no field (findingSig unchanged)",
+    runGate({ ...withMatrix(REFS.map((r) => row(r))), proposal: (() => {
+      const c = structuredClone(resolved);
+      const t = c.sections.find((s) => s.structureLabel === "3.")!.blocks.find((b) => b.id === "bv_3__v_0000a003")!;
+      if (t.kind === "stat-tiles") t.tiles[0].value = "$500";
+      return c;
+    })() }, { only: ["B7"] }).violations.every((v) => isDeepStrictEqual(v.locator, { blockId: "bv_3__v_0000a003" })));
 }
 
 /* ---- 5. Export view: the flow is interleave's ----------------------------- */
