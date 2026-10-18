@@ -1834,8 +1834,8 @@ check(
   );
   const nextConfig = read("next.config.ts");
   check(
-    "next.config (fix U1): the proxy's request-body clone is raised to 34mb (Next 16.3's experimental.proxyClientMaxBodySize), above the 32 MB file cap",
-    [/experimental: \{\s*proxyClientMaxBodySize: "34mb",\s*\}/.test(nextConfig), nextConfig.includes("POST /api/rfp/library")],
+    "next.config (fix U1 + owner 2026-10-18): the proxy's request-body clone sits ABOVE nginx's 110m outer gate (this knob truncates, never refuses, so below nginx it would silently cut what nginx forwards)",
+    [/experimental: \{\s*proxyClientMaxBodySize: "112mb",\s*\}/.test(nextConfig), nextConfig.includes("POST /api/rfp/library")],
     [true, true]
   );
 

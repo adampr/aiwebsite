@@ -23,14 +23,18 @@ const nextConfig: NextConfig = {
   // src/proxy.ts runs on every route, and Next 16.3 then buffers each
   // request body through a clone capped at 10 MB by default
   // (experimental.proxyClientMaxBodySize, next/dist/server/next-server.js
-  // getCloneableBody): a larger body reaches the route TRUNCATED, so the
-  // /rfp supporting-documents upload (POST /api/rfp/library, 32 MB per file,
-  // src/lib/rfp/attachments.ts LIBRARY_MAX_BYTES, §5.17.23) failed to parse
-  // above 10 MB. 34 MB covers the file cap plus the multipart framing; the
-  // route's own Content-Length check still refuses anything larger, and
-  // nginx's server-level client_max_body_size (110m) sits above both.
+  // getCloneableBody): a larger body reaches the route TRUNCATED, never
+  // refused, so the /rfp supporting-documents upload (POST /api/rfp/library,
+  // 32 MB per file, src/lib/rfp/attachments.ts LIBRARY_MAX_BYTES, §5.17.23)
+  // failed to parse above 10 MB, and a /work package upload above the cap
+  // was silently cut. Because this knob TRUNCATES, it must sit ABOVE the
+  // outer gate, never below it: nginx's server-level client_max_body_size
+  // is 110m (verified on the VM, /etc/nginx/aiwebsite.d), so 112 MB
+  // guarantees nothing nginx forwards is ever cut, and nginx stays the
+  // effective request-size limit (owner ask 2026-10-18). Every route's own
+  // size checks still refuse honestly below that.
   experimental: {
-    proxyClientMaxBodySize: "34mb",
+    proxyClientMaxBodySize: "112mb",
   },
   // @aicompany/core's admin blog API (packages/aicompany/src/admin/api/blog.ts,
   // submodule — not editable here) spawns node_modules/.bin/tsx via
