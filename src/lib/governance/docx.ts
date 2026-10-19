@@ -138,9 +138,11 @@ const INNER_HEADING_SPACING = {
 } as const;
 
 /** Per-list Word numbering config (round 19): level-0 format + literal
- * start (docx 9.7.1 copies levels[0].start into a w:startOverride on the
- * concrete instance - level 0 only, read POSITIONALLY, so level 0 must stay
- * first in the levels array), plus one optional level-1 config for ordered
+ * start (docx 9.12.0 writes a w:startOverride on the concrete instance for
+ * EVERY configured level, each from that level's own `start`; docx 9.7.1 to
+ * 9.11.0 copied levels[0].start for level 0 only, read POSITIONALLY, so level 0
+ * stays first in the levels array; the level-1 override equals the abstract
+ * w:start, the value level 1 restarts at anyway), plus one optional level-1 config for ordered
  * subs. The first ordered sub's format/start wins for the whole list; later
  * mismatched subs coerce (pinned) - and a non-1 sub start applies to every
  * sibling sub-list of the reference (w:start on the abstract level is the
@@ -720,9 +722,11 @@ export async function renderDocx(
     numbering: {
       // One config per ordered list encountered above, so every list
       // restarts (at its own literal start) instead of sharing a
-      // document-wide counter. Level 0 MUST be first in the array: docx
-      // 9.7.1 reads levels[0].start positionally for the w:startOverride on
-      // the concrete instance. Level-1 start rides the abstract w:start
+      // document-wide counter. Level 0 stays first in the array: docx
+      // 9.7.1-9.11.0 read levels[0].start positionally for the level-0
+      // w:startOverride; 9.12.0 writes an override per configured level from
+      // its own `start` (level 1's equals its abstract w:start, so the
+      // rendering is unchanged; test:docxnumbering). Level-1 start rides the abstract w:start
       // (explicit - ECMA-376 defaults absent w:start to 0) and the 720/360
       // indent ladder matches the package's default bullet levels so bullet
       // and ordered subs align.

@@ -15,7 +15,8 @@
  * docx 9.12.0 (#3768) also writes a startOverride for EVERY configured level
  * of a concrete instance; this test accepts a level-1 override only when it
  * equals the level's own start (the rendering is then unchanged) and prints
- * which shape the installed docx writes. This mirrors renderDocx's config
+ * which shape the installed docx writes (measured: 9.11.0 {"0":"4"}, 9.12.0
+ * {"0":"4","1":"3"}). This mirrors renderDocx's config
  * shape (level 0 first, explicit level-1 start) without needing a
  * GovernanceDoc. It also pins the font-embedding package shape that
  * src/lib/rfp/export.ts embedPlainFonts rewrites (see that section below).

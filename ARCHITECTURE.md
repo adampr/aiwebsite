@@ -1407,8 +1407,10 @@ reading-ordered output; the parser gains ordered `start` capture (split
 lists keep their count), adjacent lettered runs as real letter lists, ONE
 sub level, and a context-guarded `dropOrphanNumberLines` pre-parse pass
 ordered BEFORE promotion; docx renders per-list two-level numbering with
-`w:startOverride` (docx 9.12.0 copies levels[0].start, level 0 only - pinned by test:docxnumbering;
-positional) and upper/lowerLetter formats; the pane renders `<ol start>` +
+`w:startOverride` (docx 9.12.0 writes one per configured level, each from that
+level's own `start`: level 0 = the literal first number, level 1 = the sub start, the
+value level 1 restarts at under each parent anyway; docx <= 9.11.0 copied
+levels[0].start for level 0 only, positionally; measured by test:docxnumbering) and upper/lowerLetter formats; the pane renders `<ol start>` +
 inline `listStyleType`; `ORPHAN_DOT` strips heal stored ".7.1 Policy"
 headings, see §5.12; previously round 18d: turn zero also
 adopts the skeleton - the fresh-project-with-sample flow never enters a
@@ -5040,9 +5042,10 @@ heading stranded at a page bottom), and every ordered list mints its OWN concret
 numbering instance (`gov-num-<i>`) — a single shared
 instance makes Word continue one counter across the whole document, which shipped as
 the "numbers randomly throughout" bug. Round 19 list model v2: each instance is a
-TWO-level config whose level-0 `start` is the run's literal first number (docx 9.12.0, pinned by test:docxnumbering:
-copies `levels[0].start` — positional, level 0 must stay first — into a
-`w:startOverride`, so a paragraph-split "3. 4." run renders 3, 4 instead of
+TWO-level config whose level-0 `start` is the run's literal first number (docx 9.12.0
+writes a `w:startOverride` for every configured level from that level's own `start`;
+docx <= 9.11.0 copied `levels[0].start` for level 0 only, positionally, so level 0 stays
+first; measured by test:docxnumbering), so a paragraph-split "3. 4." run renders 3, 4 instead of
 restarting at 1: "loses the count" fixed, stored drafts self-heal), with
 decimal/upperLetter/lowerLetter formats — round 22 adds lowerRoman/upperRoman and a
 per-level separator (lvlText renders `%n<sep>`, "." or ")", default "."; the doc pane's
