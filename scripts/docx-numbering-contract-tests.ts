@@ -17,8 +17,9 @@
  * equals the level's own start (the rendering is then unchanged) and prints
  * which shape the installed docx writes. This mirrors renderDocx's config
  * shape (level 0 first, explicit level-1 start) without needing a
- * GovernanceDoc. Added by the 2026-10-19 dependency round 2 (docx 9.11.0 ->
- * 9.12.0).
+ * GovernanceDoc. It also pins the font-embedding package shape that
+ * src/lib/rfp/export.ts embedPlainFonts rewrites (see that section below).
+ * Added by the 2026-10-19 dependency round 2 (docx 9.11.0 -> 9.12.0).
  */
 import { isDeepStrictEqual } from "node:util";
 import JSZip from "jszip";
@@ -96,6 +97,29 @@ async function main() {
     check(`${c.reference}: a level-1 startOverride, if written, equals the level's own start`, l1 === undefined || l1 === String(c.subStart), true);
     console.log(`info ${c.reference}: overrides written ${JSON.stringify(n?.overrides)}`);
   });
+
+  // ── font embedding (src/lib/rfp/export.ts renderRfpDocx -> embedPlainFonts) ──
+  // export.ts passes `fonts: [{ name, data }]` and then rewrites the packed
+  // zip, relying on docx writing: word/fontTable.xml <w:font w:name="N"> with
+  // <w:embedRegular r:id> and a w:fontKey, word/_rels/fontTable.xml.rels
+  // Targets ending ".odttf" that exist in the zip, and a [Content_Types].xml
+  // <Default Extension="odttf">. If any of these moves, embedPlainFonts
+  // silently returns the obfuscated package (LibreOffice then falls back).
+  const fontDoc = new Document({
+    fonts: [{ name: "Contract Sans", data: Buffer.alloc(256, 7) }],
+    sections: [{ children: [new Paragraph({ text: "font" })] }],
+  });
+  const fz = await JSZip.loadAsync(await Packer.toBuffer(fontDoc));
+  const ft = (await fz.file("word/fontTable.xml")?.async("string")) ?? "";
+  const frels = (await fz.file("word/_rels/fontTable.xml.rels")?.async("string")) ?? "";
+  const ct = (await fz.file("[Content_Types].xml")?.async("string")) ?? "";
+  const fm = /<w:font w:name="Contract Sans">([\s\S]*?)<\/w:font>/.exec(ft);
+  const rid = fm?.[1].match(/<w:embedRegular[^>]*r:id="([^"]+)"/)?.[1];
+  const fkey = /w:fontKey="\{[^}]+\}"/.test(fm?.[1] ?? "");
+  const target = rid ? new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*Target="([^"]+)"`).exec(frels)?.[1] : undefined;
+  check("fonts: fontTable has the named font with an embedRegular r:id and a fontKey", [Boolean(fm), Boolean(rid), fkey], [true, true, true]);
+  check("fonts: its rel target is an .odttf part that exists in the zip", [target?.endsWith(".odttf"), target ? Boolean(fz.file(`word/${target}`)) : false], [true, true]);
+  check("fonts: [Content_Types].xml has the odttf Default", /<Default [^>]*Extension="odttf"[^>]*\/>/.test(ct), true);
 
   console.log(failures === 0 ? "docx numbering contract: all checks passed" : `docx numbering contract: ${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
