@@ -85,13 +85,14 @@
     "test:samplextract": "tsx scripts/style-sample-extract-tests.ts",
     "test:resendsdk": "tsx scripts/resend-sdk-contract-tests.ts",
     "test:stripesdk": "tsx scripts/stripe-sdk-contract-tests.ts",
-    "test:dotenv": "tsx scripts/dotenv-contract-tests.ts"
+    "test:dotenv": "tsx scripts/dotenv-contract-tests.ts",
+    "test:docxnumbering": "tsx scripts/docx-numbering-contract-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
     "@anthropic-ai/sdk": "^0.133.0",
     "@breezystack/lamejs": "^1.2.7",
-    "docx": "^9.11.0",
+    "docx": "^9.12.0",
     "dotenv": "^18.0.8",
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.4",
