@@ -17,7 +17,8 @@
  * success envelopes (incl. the download_url field the site fetches) and that
  * an API error comes back in `error` instead of throwing. Added by the
  * 2026-10-09 dependency-upgrade train (resend 6.17.1 -> 6.32.1); call 2 and
- * the module call-site note added after the 2026-10-10 refute (F1).
+ * the module call-site note added after the 2026-10-10 refute (F1); the
+ * dot-segment refusal cases added by the 2026-10-19 round 2 (6.34.1).
  */
 import { isDeepStrictEqual } from "node:util";
 import { Resend } from "resend";
@@ -79,6 +80,28 @@ async function main() {
     const attBad = await resend.emails.receiving.attachments.get({ emailId: "in_1", id: "missing" });
     console.error = realError;
     check("attachments.get error: data null, message in `error` (no throw)", { d: attBad.data, m: attBad.error?.message }, { d: null, m: "Attachment not found" });
+
+    // ── dot-segment ids (resend 6.34.0 #1139): refused in the SDK with an
+    // error envelope and NO request, never a throw. emailId comes from the
+    // inbound webhook, so a hostile "." / ".." / "%2e%2e" must land in the
+    // `error` branch that email-intake.ts:480 already handles. Added by the
+    // 2026-10-19 dependency round 2 (6.32.1 -> 6.34.1); red on 6.32.1. ──
+    for (const id of [".", "..", "%2e%2e"]) {
+      console.error = () => {};
+      stubFetch(200, { id, from: "a@example.test" });
+      let threw = false;
+      let r: { data: unknown; error: { name?: string } | null } = { data: undefined, error: null };
+      try { r = await resend.emails.receiving.get(id); } catch { threw = true; }
+      console.error = realError;
+      check(`receiving.get(${JSON.stringify(id)}): no throw, data null, invalid_parameter, no request`, { threw, d: r.data, n: r.error?.name, calls: calls.length }, { threw: false, d: null, n: "invalid_parameter", calls: 0 });
+      console.error = () => {};
+      stubFetch(200, { id: "att_1", download_url: "https://cdn.resend.app/x" });
+      threw = false;
+      let a: { data: unknown; error: { name?: string } | null } = { data: undefined, error: null };
+      try { a = await resend.emails.receiving.attachments.get({ emailId: "in_1", id }); } catch { threw = true; }
+      console.error = realError;
+      check(`attachments.get(id ${JSON.stringify(id)}): no throw, data null, invalid_parameter, no request`, { threw, d: a.data, n: a.error?.name, calls: calls.length }, { threw: false, d: null, n: "invalid_parameter", calls: 0 });
+    }
   } finally {
     globalThis.fetch = realFetch;
     console.error = realError;

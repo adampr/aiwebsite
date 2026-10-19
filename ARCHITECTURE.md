@@ -1885,7 +1885,7 @@ aiwebsite/
 ```
 
 **Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.4.2** · React **19.3.1**
-· TypeScript 6 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.32
+· TypeScript 6 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.34
 · maxmind 5 + mmdb-lib (IP→org for /admin/companies).
 `src/proxy.ts` is the module's tracking/CSRF middleware wrapper (§5.6) under the Next 16
 **proxy** file convention (the renamed `middleware.ts`; proxy always runs in the Node.js
