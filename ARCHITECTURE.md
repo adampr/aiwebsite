@@ -17577,6 +17577,26 @@ companion for local servers: it inventories every `next-server` with its port,
 cwd and supervision state, stops only unsupervised idle ones, and (`--check`)
 reports crash-looping systemd user units.
 
+### 9.8 Read-only logrotate probe (`deploy/read-prod-logrotate.sh`, 2026-10-21)
+
+`bash deploy/read-prod-logrotate.sh` (no arguments) opens one ssh connection
+with the same transport as the other `deploy/read-prod-*.sh` probes (host, user and key read from `.env` by the script) and prints, read-only:
+`systemctl status logrotate.service --no-pager`, `ls -la /etc/logrotate.d/`,
+`grep -l watchdog /etc/logrotate.d/*`, and the number of `error:` lines in
+`sudo -n logrotate -d /etc/logrotate.conf` (a debug run: it rotates nothing).
+Why it exists: on 2026-10-20 itsupportchicago's `logrotate.service` had failed
+every night since a June one-off fragment, `/etc/logrotate.d/<slug>-watchdog`,
+duplicated the `/var/log/<slug>-*.log` stanza that setup-vm writes to
+`/etc/logrotate.d/aiwebsite` ("duplicate log entry", the run exits 1, rotation
+itself kept working). No file in this repo writes a `-watchdog` fragment, so
+only a host read can tell whether this VM has one. Healthy = the unit is not
+`failed`, the only fragment naming the watchdog logs is `aiwebsite`, and the
+`error:` count is 0. Repair if a duplicate turns up (itsupportchicago's,
+2026-10-20): `sudo mv -n /etc/logrotate.d/aiwebsite-watchdog
+/etc/logrotate.d/aiwebsite-watchdog.disabled` (logrotate ignores `*.disabled`),
+`sudo systemctl reset-failed logrotate.service`, then this probe again; revert
+with the reverse `mv -n`. That is a host write: it is not part of this probe.
+
 ## 10. Environment variables (single shared `.env`, site + brain + deploy)
 
 Generate secrets with `openssl rand -hex 32`. `.env.example` is the authoritative template —
