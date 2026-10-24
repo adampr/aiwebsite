@@ -20,7 +20,9 @@
  * shape (level 0 first, explicit level-1 start) without needing a
  * GovernanceDoc. It also pins the font-embedding package shape that
  * src/lib/rfp/export.ts embedPlainFonts rewrites (see that section below).
- * Added by the 2026-10-19 dependency round 2 (docx 9.11.0 -> 9.12.0).
+ * Added by the 2026-10-19 dependency round 2 (docx 9.11.0 -> 9.12.0);
+ * style-id uniqueness and the default tab stop added 2026-10-24
+ * (docx 9.12.0 -> 9.14.0).
  */
 import { isDeepStrictEqual } from "node:util";
 import JSZip from "jszip";
@@ -121,6 +123,18 @@ async function main() {
   check("fonts: fontTable has the named font with an embedRegular r:id and a fontKey", [Boolean(fm), Boolean(rid), fkey], [true, true, true]);
   check("fonts: its rel target is an .odttf part that exists in the zip", [target?.endsWith(".odttf"), target ? Boolean(fz.file(`word/${target}`)) : false], [true, true]);
   check("fonts: [Content_Types].xml has the odttf Default", /<Default [^>]*Extension="odttf"[^>]*\/>/.test(ct), true);
+
+  // ── package defaults the RFP pin depends on (docx 9.13/9.14, 2026-10-24) ──
+  // export.ts and governance/docx.ts add no paragraph styles of their own
+  // and set explicit tab stops, so docx's growing default style set must not
+  // repeat a styleId, and the written default tab stop must be Word's own
+  // half inch (720 twips), which leaves Word's layout unchanged.
+  const dz = await JSZip.loadAsync(await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ text: "x" })] }] })));
+  const styleIds = [...((await dz.file("word/styles.xml")?.async("string")) ?? "").matchAll(/w:styleId="([^"]+)"/g)].map((m) => m[1]);
+  check("styles: every styleId docx writes is unique", styleIds.length > 0 && new Set(styleIds).size === styleIds.length, true);
+  const tab = /<w:defaultTabStop w:val="(\d+)"\/>/.exec((await dz.file("word/settings.xml")?.async("string")) ?? "")?.[1];
+  check("settings: default tab stop, if written, is 720 twips", tab === undefined || tab === "720", true);
+  console.log(`info styles written: ${styleIds.length}; defaultTabStop ${tab ?? "absent"}`);
 
   console.log(failures === 0 ? "docx numbering contract: all checks passed" : `docx numbering contract: ${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);

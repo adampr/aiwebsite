@@ -1561,8 +1561,16 @@ const sha256 = (b: Buffer | string) => createHash("sha256").update(b).digest("he
  *  emitters' (66a5e8e6) by rendering both trees in fresh processes; this pin
  *  keeps that true. A change here means a real RFP's file changed: re-pin
  *  only after proving the change is intended (a docx upgrade, a deliberate
- *  design change). */
-const RFP_DOCX_XML_SHA256 = "d28b22242b330c3fc9844915adbb13bebeee2daee16377e808222c3dc9ee5964";
+ *  design change).
+ *  Re-pinned 2026-10-24 for docx 9.12.0 -> 9.14.0 (was d28b2224...): a
+ *  normalized part-by-part diff of this fixture's render before and after
+ *  showed ONLY three changelog items, all additive and render-neutral in
+ *  Word: wp:docPr drops the empty descr="" title="" attributes (9.13.0
+ *  #3777), settings.xml gains <w:defaultTabStop w:val="720"/> (9.14.0
+ *  #3816, Word's own default), and styles.xml gains unused Caption,
+ *  Bibliography and TOC1..TOC9 definitions (9.14.0 #3813/#3821); no
+ *  removed line, numbering and footers byte-equal, PDF texts unchanged. */
+const RFP_DOCX_XML_SHA256 = "c974aab31ddbca8b979354b210861d7e5abf80407cbdac55590649e8330bef75";
 /** The same fixture's PDF page count and its page texts' hash. */
 const RFP_PDF_PAGES = 14;
 const RFP_PDF_TEXT_SHA256 = "24ae08520975dbaabfcd2f1689c8b1299a44482f324ae25b939a277db4d9a6ff";
