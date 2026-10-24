@@ -88,7 +88,8 @@
     "test:dotenv": "tsx scripts/dotenv-contract-tests.ts",
     "test:docxnumbering": "tsx scripts/docx-numbering-contract-tests.ts",
     "test:anthropicsdk": "tsx scripts/anthropic-sdk-contract-tests.ts",
-    "test:aicompany": "tsx scripts/aicompany-upgrade-contract-tests.ts"
+    "test:aicompany": "tsx scripts/aicompany-upgrade-contract-tests.ts",
+    "test:zod": "tsx scripts/zod-contract-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
@@ -109,7 +110,8 @@
     "react-dom": "19.3.1",
     "resend": "^6.34.1",
     "sharp": "^0.35.5",
-    "stripe": "^23.0.0"
+    "stripe": "^23.0.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
