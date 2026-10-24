@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@fb3ca442e78cdf9016cf4891e3420df725555467de7248764e914c543345591e
+# aicompany-template: watchdog.sh.tpl@babbbd5b8bc48e2c0ec2014ae62f7552d7f8639264b39bab7851005d6ef1051e
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -36,7 +36,7 @@ app_root="/var/www/aiwebsite"
 # Build placement (§9.2 v1.78.0): on local-artifact hosts the repair rebuild
 # is DISABLED (alert-only) — a VM-side build is the 2026-08-08 outage class,
 # and stage-build.sh build refuses on such hosts anyway.
-build_mode='remote'
+build_mode='local-artifact'
 pid_file="/var/run/aiwebsite-watchdog.pid"
 lock_file="/var/run/aiwebsite-watchdog.lock"
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
@@ -1137,6 +1137,12 @@ while true; do
     # precursor → CRITICAL, even though pm2 auto-restarts.
     kill_sev="CRITICAL"
     marker="/var/run/aiwebsite-deploy-in-progress"
+    # v1.161.0: a kill whose EVERY victim is a headless browser is earlyoom
+    # doing what --prefer asked (the collectors' Chromium goes first, the site
+    # survives) — WARN, not CRITICAL. A mixed list stays CRITICAL.
+    if ! printf '%s' "$earlyoom_kills" | grep -aqvE '"(chrome|chromium|headless_shell)[^"]*"'; then
+      kill_sev="WARN (headless browser victim)"
+    fi
     if [[ -f "$marker" ]] && (( now_ts - $(stat -c %Y "$marker" 2>/dev/null || echo 0) < 1800 )); then
       if ! printf '%s' "$earlyoom_kills" | grep -aqvE '"(npm|node|next-server|tsx|npx)[^"]*"'; then
         kill_sev="WARN (deploy window)"

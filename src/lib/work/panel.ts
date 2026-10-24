@@ -1237,8 +1237,8 @@ async function runPanelInner(
         // The swap is COMMITTED; nothing after it may unwind to the
         // runner's catch (failPanel). Its status predicate makes that a
         // no-op anyway, but a demote attempt on a published row should
-        // never even be reached (refutation MAJOR, 2026-08-03). ISR floor
-        // covers a failed revalidate; the approve route's alreadySwapped
+        // never even be reached (refutation MAJOR, 2026-08-03). A failed
+        // revalidate costs nothing (/work is force-dynamic since 2026-10-23); the approve route's alreadySwapped
         // branch re-attempts a failed retention email.
         try {
           await revalidateWorkPage();
@@ -1290,61 +1290,19 @@ async function runPanelInner(
   await deliverArchiveRetention(row);
 }
 
-/** Refresh the public /work page after a publish, from ANY execution
- * context. Layer 1, revalidatePath: flushes only when the panel runs inside
- * a live work unit (the request-scoped paths: form submit, admin retry and
- * rerun all wrap the runner in after(), whose queue executes under
- * withExecuteRevalidates). On the email path the panel runs fully detached
- * (the module webhook ACKs and detaches BEFORE the onInbound hook), so the
- * pending revalidation is queued on a long-flushed response and silently
- * dropped; that is how the first real email submission sat invisible behind
- * ISR (owner report 2026-07-31).
- * Layer 2 therefore does what revalidatePath cannot from a detached
- * context: a loopback on-demand ISR request. Next compares the
- * x-prerender-revalidate header against the build's previewModeId
- * (checkIsOnDemandRevalidate) and force-regenerates the cache entry,
- * answering x-nextjs-cache: REVALIDATED. Both layers are best-effort; any
- * failure leaves the ISR revalidate=300 floor as the self-healing fallback. */
+/** Refresh the public /work page after a publish. /work is force-dynamic
+ * (2026-10-23): the next request reads the database, so there is no cached
+ * copy to regenerate and the loopback on-demand ISR request this helper used
+ * to send (x-prerender-revalidate with the build's previewModeId) is gone;
+ * it re-rendered the page for nothing on every publish. revalidatePath stays
+ * as a harmless flush of the client router cache on the request-scoped paths
+ * (form submit, admin retry and rerun); from a detached context (the email
+ * path) it is dropped, which no longer matters. Best-effort; never throws. */
 export async function revalidateWorkPage(): Promise<void> {
   try {
     const { revalidatePath } = await import("next/cache");
     revalidatePath("/work");
   } catch {
-    // outside any request scope entirely; the loopback below still runs
-  }
-  try {
-    const [{ readFile }, { join }] = await Promise.all([
-      import("node:fs/promises"),
-      import("node:path"),
-    ]);
-    const manifest = JSON.parse(
-      await readFile(
-        join(process.cwd(), ".next", "prerender-manifest.json"),
-        "utf8"
-      )
-    ) as { preview?: { previewModeId?: string } };
-    const secret = manifest.preview?.previewModeId;
-    if (!secret) {
-      console.log(
-        "[work] loopback revalidate skipped: no previewModeId in prerender-manifest.json; ISR floor applies"
-      );
-      return;
-    }
-    const res = await fetch(
-      `http://127.0.0.1:${process.env.PORT || "3000"}/work`,
-      {
-        headers: { "x-prerender-revalidate": secret },
-        signal: AbortSignal.timeout(15_000),
-      }
-    );
-    await res.arrayBuffer().catch(() => undefined); // release the socket
-    if (res.headers.get("x-nextjs-cache") !== "REVALIDATED")
-      console.log(
-        `[work] loopback revalidate: status=${res.status} cache=${res.headers.get("x-nextjs-cache") ?? "-"}; ISR floor applies`
-      );
-  } catch (err) {
-    console.log(
-      `[work] loopback revalidate failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}; ISR floor applies`
-    );
+    // outside any request scope: nothing to flush (/work is force-dynamic (2026-10-23): the next request reads the database)
   }
 }

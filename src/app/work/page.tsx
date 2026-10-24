@@ -17,10 +17,14 @@ import staticTitles from "@/lib/work/static-titles.json";
 
 // Team-submitted cards (§5.16) publish to this page without a deploy, so a
 // hard-coded count in the metadata would go false on the first publish;
-// the description is count-free by rule. ISR keeps the page static-fast
-// while letting publishes appear within minutes (the blog precedent);
-// publish/delete also call revalidatePath as the fast path.
-export const revalidate = 300;
+// the description is count-free by rule. Rendered per request since
+// 2026-10-23: the build runs on the DEV BOX (DEPLOY_BUILD_MODE=local-artifact),
+// so the ISR prerender this page had (`revalidate = 300`) baked the DEV
+// database's published cards into the shipped artifact and served them until
+// the first regeneration on the VM. force-dynamic reads the production DB on
+// every request instead; the publish/delete revalidatePath calls stay
+// (harmless on a dynamic route).
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Our Work: Real AI Systems Running in the Open",

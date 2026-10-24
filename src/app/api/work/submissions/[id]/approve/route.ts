@@ -79,7 +79,7 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       const { revalidatePath } = await import("next/cache");
       revalidatePath("/work");
     } catch {
-      // ISR revalidate=300 is the floor
+      // /work is force-dynamic (2026-10-23): the next request reads the database
     }
     await revalidateWorkPage();
     await notifyUpdateApproved(row, swapped.card, swapped.slug, {
@@ -104,7 +104,7 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       const { revalidatePath } = await import("next/cache");
       revalidatePath("/work");
     } catch {
-      // ISR revalidate=300 is the floor
+      // /work is force-dynamic (2026-10-23): the next request reads the database
     }
   }
   // Owner retention email (attach-if-fits) on this publish path too; the

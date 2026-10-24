@@ -389,9 +389,9 @@ export function SubmitClient({
    * `rolledBack: true` in the response; the legacy parent-gone edge falls
    * through to a plain delete, which is why the notice reads the response
    * rather than trusting the label), any other published delete removes the
-   * live card (the internal lane's /work catches up on the next ISR pass,
-   * revalidate=300; a company page is force-dynamic and updates on its next
-   * load), and the route's 409s (superseded reservoir, update in review,
+   * live card (/work is force-dynamic (2026-10-23): the next request reads
+   * the database; a company page is force-dynamic too and updates on its
+   * next load), and the route's 409s (superseded reservoir, update in review,
    * status moved since page load) are the guard rails, surfaced verbatim. */
   async function removeRow(row: StatusRow) {
     const published = row.status === "published";

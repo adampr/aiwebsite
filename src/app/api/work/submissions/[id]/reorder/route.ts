@@ -60,7 +60,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       const { revalidatePath } = await import("next/cache");
       revalidatePath("/work");
     } catch {
-      // ISR revalidate=300 is the floor
+      // /work is force-dynamic (2026-10-23): the next request reads the database
     }
   }
   return okJson({ spot: res.spot, laneSize: res.laneSize });

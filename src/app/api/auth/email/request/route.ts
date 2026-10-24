@@ -10,8 +10,13 @@
 //    consults it on every Google/Microsoft login too) and would lock all
 //    staff out of every sign-in lane.
 //
-// 2. RETURN-TO CAPTURE. The module's verify handler always lands on "/"
-//    (no redirect parameter exists in its contract). The login form sends
+// 2. RETURN-TO CAPTURE. The module's verify handler lands on "/" unless the
+//    mailed link carries a `redirect` (an optional request-body field since
+//    module v1.144.0). This wrapper forwards `{ email }` ONLY, so no redirect
+//    ever rides the link and the module keeps landing on "/" — the verify
+//    wrapper's success test depends on that (forwarding the field would retire
+//    the cookie below and change that test; scripts/aicompany-upgrade-contract-
+//    tests.ts pins the forwarded body). The login form sends
 //    the intended return path here; we validate it against our own origin
 //    and park it in a short-lived cookie that the host verify wrapper
 //    consumes. auth.postLoginRedirect is NOT used for this: it also fires

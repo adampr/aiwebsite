@@ -1,6 +1,7 @@
 // Magic-link VERIFY (§5.18) — host wrapper over the module factory. The
-// module handler always 302s to "/" on success (its contract carries no
-// return path); this wrapper substitutes the validated return-to path parked
+// module handler 302s to "/" on success here, because the request wrapper
+// never puts a `redirect` on the link (module v1.144.0 made that an optional
+// field this host does not use); this wrapper substitutes the validated return-to path parked
 // by the request route's cookie, so an approval-email recipient who signs in
 // via email link lands back on the approval page instead of the homepage.
 // Error redirects (to /login?error=...) pass through untouched.

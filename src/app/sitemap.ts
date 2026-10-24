@@ -6,9 +6,15 @@ import { blogSitemapEntries } from "@aicompany/core/blog/sitemap";
 import { createSitemap } from "@aicompany/core/seo/sitemap";
 import { siteConfig } from "site.config";
 
-// Without this the route is baked at build time and nightly-published blog
-// articles never enter the sitemap until the next deploy rebuilds it.
-export const revalidate = 3600;
+// Rendered per request, never at build time (2026-10-23, DEPLOY_BUILD_MODE=
+// local-artifact). The build now runs on the DEV BOX, whose DATABASE_URL is the
+// local dev database: a build-time render baked the dev DB's article list into
+// the shipped artifact (measured: 12 locs, one /blog/ article, where prod has
+// the whole blog), served until ISR regenerated it on the VM. roleplay hit the
+// same class on 2026-08-19 (c87a820, "local-artifact builds baked out all 41
+// articles") with the same remedy. It was `revalidate = 3600` while the VM
+// built against the production DB; this route is one small query per hit.
+export const dynamic = "force-dynamic";
 
 // lastmod per static page (§21 scorecard row `sitemap-lastmod`, which found
 // 10 of 26 locs carrying no <lastmod> — every one of them a host page, while
@@ -17,9 +23,9 @@ export const revalidate = 3600;
 // THE RULE: a REAL content timestamp or NOTHING. Never `new Date()`.
 // itsupportchicago's QA-058 restamped 117 URLs on every hourly ISR
 // regeneration, which teaches crawlers to ignore lastmod on the domain
-// entirely — strictly worse than omitting it. Note `revalidate = 3600` above:
-// this route re-renders hourly, so a computed date here would be exactly that
-// defect.
+// entirely — strictly worse than omitting it. Note `force-dynamic` above:
+// this route re-renders on every fetch, so a computed date here would be exactly
+// that defect.
 //
 // Real dates of last material change, from `git log -1 --format=%cs -- <file>`
 // on 2026-07-28. **Update the entry when you materially change the page.**

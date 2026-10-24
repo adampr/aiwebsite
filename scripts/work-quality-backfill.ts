@@ -44,9 +44,9 @@
 //
 // Sequential, oldest published_at first, one console line per row:
 //   [work-quality] <id> <title> -> assessed|unusable:<why>|skipped:<why>|refused:<reason>
-// After the loop, if anything was written, revalidateWorkPage() (panel.ts:
-// its loopback layer works from a detached process on the VM) so /work shows
-// the new lines without waiting out the 300 s ISR floor.
+// After the loop, if anything was written, revalidateWorkPage() (panel.ts).
+// /work is force-dynamic (2026-10-23): the next request reads the database, so
+// the new lines show at once either way.
 //
 // Usage:
 //   npm run work:quality -- [--id <uuid>] [--apply] [--force] [--yes]
@@ -339,7 +339,7 @@ async function main(): Promise<void> {
 
   if (written > 0) {
     console.log(
-      `[work-quality] ${written} row(s) written; revalidating /work (both layers best-effort; the 300 s ISR floor is the fallback)`
+      `[work-quality] ${written} row(s) written; revalidating /work (best-effort; /work is force-dynamic, so the next request reads the database)`
     );
     await revalidateWorkPage();
   }

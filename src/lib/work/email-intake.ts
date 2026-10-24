@@ -494,8 +494,8 @@ export async function maybeHandleWorkEmail(
     // because after() does not throw while the ALS store is still
     // propagated (panel blocker finding, 2026-07-31). The consequence, that
     // revalidatePath is silently dropped in this detached context, is
-    // handled at the publish step instead (panel.ts revalidateWorkPage:
-    // loopback on-demand ISR, request-scope-independent).
+    // moot: /work is force-dynamic (2026-10-23): the next request reads the
+    // database (panel.ts revalidateWorkPage).
     void handleWorkEmail(ctx.emailId, sender, email).catch((err: unknown) =>
       log(
         `handler dispatch failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`

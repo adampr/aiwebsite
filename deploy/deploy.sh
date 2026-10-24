@@ -80,7 +80,7 @@ transport="ssh-key"
 # Build placement (§9.2 v1.78.0): "remote" = staged VM-side build (unchanged
 # default); "local-artifact" = the dev box builds .next below and ships it —
 # the VM NEVER runs `next build` (the 2026-08-08 itsc outage class).
-build_mode="remote"
+build_mode="local-artifact"
 tunnel_cred_local="${TUNNEL_CRED_LOCAL:-$HOME/.cloudflared/aiwebsite-tunnel.json}"
 
 # ── Working-tree gate (§9, v1.104.0). THIS SCRIPT SHIPS THE WORKING TREE.

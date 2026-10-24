@@ -101,17 +101,17 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // holds.
   if (!saved) return NOT_FOUND();
 
-  // The public /work page is ISR; the company Your Work page is
-  // force-dynamic and needs nothing. Flush only for a PUBLISHED staff-lane
-  // row, because that is the only case where a card on a cached page is
-  // showing the old figure. The 300 s revalidate floor is the fallback if
-  // this throws (the reorder and DELETE routes take the same shape).
+  // The public /work page and the company Your Work page are both
+  // force-dynamic (/work since 2026-10-23: the next request reads the
+  // database). The flush below only clears the client router cache for a
+  // PUBLISHED staff-lane row; a throw costs nothing (the reorder and DELETE
+  // routes take the same shape).
   if (row.status === "published" && row.companyId === null) {
     try {
       const { revalidatePath } = await import("next/cache");
       revalidatePath("/work");
     } catch {
-      // ISR revalidate=300 is the floor
+      // /work is force-dynamic (2026-10-23): the next request reads the database
     }
   }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@2fa81b749966a254e27eed1118c7c790938e69273184d05fd4264c00341e1863
+# aicompany-template: setup-vm.sh.tpl@5d76a3b41154bc22d2e37d455c2f9a576c7ef670f16725dca0695a9aa0c0b8dd
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -16,7 +16,7 @@ module_dir="$app_dir/packages/aicompany"
 # default); "local-artifact" = deploy.sh built .next on the dev box and
 # shipped it to /var/tmp — this script extracts it into the STAGE tree and
 # never runs `next build` (the 2026-08-08 itsc outage class).
-build_mode="remote"
+build_mode="local-artifact"
 
 echo "=== ai.xl.net — VM Setup ==="
 
@@ -129,7 +129,9 @@ grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee 
 printf 'vm.swappiness = 60\n' | sudo tee /etc/sysctl.d/90-aicompany-memory.conf >/dev/null
 sudo sysctl -q -p /etc/sysctl.d/90-aicompany-memory.conf
 
-# 2. earlyoom (S2: no -N mailer — the notifier is sandbox-broken on Debian
+# 2. earlyoom (v1.161.0: chrome|chromium|headless_shell lead --prefer, so a
+#    collector's headless browser is the first victim, never next-server or
+#    postgres; S2: no -N mailer — the notifier is sandbox-broken on Debian
 #    units and failed silently; the watchdog scans the journal for kill
 #    events instead. S5: regexes UNQUOTED + space-free — systemd $VAR
 #    splitting keeps quote characters literal otherwise)
@@ -138,7 +140,7 @@ sudo systemctl mask --now systemd-oomd >/dev/null 2>&1 || true
 sudo tee /etc/default/earlyoom >/dev/null <<'EOF'
 # aicompany hardening 2026-07-22: SIGTERM at MemAvail<15% AND SwapFree<30%; KILL at 8%/15%.
 # Regexes UNQUOTED+space-free (systemd $VAR splitting keeps quotes literal otherwise).
-EARLYOOM_ARGS="-m 15,8 -s 30,15 -r 300 --avoid ^(sshd|sshd-session|systemd|systemd-journal|systemd-logind|cloudflared|nginx|postgres|earlyoom|cron)$ --prefer ^(npm|node|next-server|tsx|npx)$"
+EARLYOOM_ARGS="-m 15,8 -s 30,15 -r 300 --avoid ^(sshd|sshd-session|systemd|systemd-journal|systemd-logind|cloudflared|nginx|postgres|earlyoom|cron)$ --prefer ^(chrome|chromium|headless_shell|npm|node|next-server|tsx|npx)$"
 EOF
 sudo mkdir -p /etc/systemd/system/earlyoom.service.d
 sudo tee /etc/systemd/system/earlyoom.service.d/90-aicompany.conf >/dev/null <<'EOF'
@@ -728,6 +730,23 @@ fi
 echo ">>> Running config:check (stage, post-migrate)..."
 bash deploy/stage-build.sh check
 
+# ── Headless browser (v1.161.0, §9.2): the staged app's playwright-core gets
+# its matching Chromium + system libraries. Inside the sentinel window (its
+# download runs capped, in a aiwebsite-stage-* scope), OUTSIDE the cutover
+# bracket, BEFORE the health gate. A no-op when the build is present and loads,
+# and when the app has no playwright-core. NON-FATAL: a browser CDN or apt
+# outage degrades the browser-driven collectors to a logged skip/failure — it
+# must never block an app deploy (the apt-get update precedent above).
+if ! bash deploy/stage-build.sh browser; then
+  echo "WARN: headless-browser provisioning FAILED (above) — the deploy continues; browser-driven"
+  echo "      collectors will log a launch failure until a later deploy provisions it"
+fi
+# ...EXCEPT when the liveness sentinel fired during the step: the live site went
+# dark, which aborts the deploy here exactly as it does for every other stage
+# step (refute N1). Pre-cutover, so the old build keeps serving.
+[ -f "$sentinel_flag" ] && { echo "ERROR: liveness sentinel fired during browser provisioning — the live site went dark; deploy ABORTED before cutover (old build serving)"; exit 1; }
+sudo touch "$deploy_marker"
+
 # Sentinel OFF right after the check gate, BEFORE the extra-services bracket
 # (v1.15.0): the cutover flip restarts the site — its seconds-wide health dip
 # must never be read as starvation and trigger a scope kill.
@@ -1026,10 +1045,22 @@ UNIT
 # a slug hash (2700–5400s) so N hosts never share a publish window
 # (network-footprint mitigation). The log is covered by the
 # /var/log/aiwebsite-*.log logrotate glob installed below.
-# RuntimeMaxSec=7200 (v1.102.0): the run-level deadline. Type=oneshot never
-# double-starts, so a HUNG run (the v1.99.0 class: a poisoned shared pg
-# client waiting forever) silently blocks EVERY future timer fire — no
-# alert, no catch-up, just a nightly that stops happening.
+# TimeoutStartSec=7200 (v1.143.0; the run-level deadline v1.102.0 meant to
+# ship as RuntimeMaxSec=7200): Type=oneshot never double-starts, so a HUNG
+# run (the v1.99.0 class: a poisoned shared pg client waiting forever)
+# silently blocks EVERY future timer fire — no alert, no catch-up, just a
+# nightly that stops happening.
+# MECHANISM (probe-proven on systemd 255, 2026-09-24, dev box + prod VM): a
+# oneshot spends its whole life "activating"; its START timeout is the only
+# run bound and it defaults to INFINITY (TimeoutStartUSec=infinity).
+# TimeoutStartSec= is the directive that re-arms it. RuntimeMaxSec= is
+# IGNORED on oneshot — systemd logs "RuntimeMaxSec= has no effect in
+# combination with Type=oneshot. Ignoring." — so from v1.102.0 through
+# v1.142.1 this deadline did not exist at runtime (BlogWarningsHistory
+# §7.35). A TimeoutStartSec kill lands the unit in FAILED state
+# (Result=timeout) and arms OnFailure= where a unit declares one; the next
+# timer fire then starts fresh instead of queuing behind a
+# forever-"activating" hang.
 # Derivation, RE-DONE in v1.111.0 (the old one named "the 450s panel ceiling"
 # and panelTimeoutMs is now 660s): a run makes at most FOUR panel-forced writer
 # calls (draft, repair, regenerate, Phase B refresh), so 4x660 + the 600s
@@ -1041,11 +1072,16 @@ UNIT
 # a render.mjs output, so nothing in this repo gates it) runs the module up to
 # THREE times per invocation, and the historical "71 min max observed run" that
 # sized this deadline was itself a three-attempt night: a 3-run number sizing a
-# 1-run budget. Re-check both against that drop-in before raising either.
+# 1-run budget. Re-check both against that drop-in before raising either — and
+# a drop-in that multiplies attempts must OVERRIDE TimeoutStartSec in the SAME
+# drop-in (roleplay's derived value is 21600s; its 3-attempt 2026-09-06 day
+# measured 123 min 18 s, over this 120 min bound — BlogWarningsHistory §7.35).
 # Failure surface, named: a systemd SIGTERM/SIGKILL at the
 # deadline may skip blog-nightly's data/blog-last-run heartbeat write, so
 # the stamp goes stale — the watchdog's 26h blog-heartbeat age check is the
-# backstop that surfaces a killed-every-night job as a WARN. So a ceiling
+# backstop that surfaces a killed-every-night job as a WARN, and since
+# v1.143.0 the timed-out unit also sits visibly failed (systemctl --failed,
+# Result=timeout). So a ceiling
 # raised to REDUCE WARN mail must stay inside this margin, or it manufactures
 # a nightly heartbeat WARN in exchange.
 if [ "1" = "1" ]; then
@@ -1057,7 +1093,7 @@ After=network-online.target postgresql.service aiwebsite-knowledge.service
 
 [Service]
 Type=oneshot
-RuntimeMaxSec=7200
+TimeoutStartSec=7200
 User=$deploy_user
 WorkingDirectory=/var/www/aiwebsite
 ExecStart=/var/www/aiwebsite/node_modules/.bin/tsx /var/www/aiwebsite/packages/aicompany/scripts/blog-nightly.ts
@@ -1121,14 +1157,20 @@ After=postgresql.service
 
 [Service]
 Type=oneshot
-# RuntimeMaxSec (v1.114.0): for Type=oneshot systemd disables the start timeout
-# by DEFAULT, so a wedged run blocks every future timer fire with no alert —
-# the same class the blog unit got RuntimeMaxSec=7200 for in v1.102.0. It also
+# TimeoutStartSec (v1.114.0 intent, directive corrected v1.143.0): for
+# Type=oneshot the START timeout is systemd's only bound on the run and it
+# defaults to INFINITY, so a wedged run blocks every future timer fire with no
+# alert — the same class the blog unit got its deadline for in v1.102.0.
+# v1.114.0 spelled this bound RuntimeMaxSec=3600, which systemd IGNORES on a
+# oneshot ("RuntimeMaxSec= has no effect in combination with Type=oneshot.
+# Ignoring." — probe-proven on systemd 255, 2026-09-24), so it never existed
+# at runtime; TimeoutStartSec= is the directive that binds. It also
 # bounds the v1.114.0 single-instance flock: without a deadline a wedged run
 # holds that lock forever and every later night exits on contention. 1h against
-# a dump+upload measured in minutes; the 26h backup-heartbeat check remains the
+# a dump+upload measured in minutes; a timeout kill fails the unit
+# (Result=timeout); the 26h backup-heartbeat check remains the
 # outer backstop for a run that dies without alerting.
-RuntimeMaxSec=3600
+TimeoutStartSec=3600
 ExecStart=/usr/local/bin/aiwebsite-backup-db.sh
 StandardOutput=append:/var/log/aiwebsite-backup.log
 StandardError=append:/var/log/aiwebsite-backup.log

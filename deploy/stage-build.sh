@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: stage-build.sh.tpl@9043bf5356345c1668bbbc4d94b51852a79fe137db69ff20c0c34987ed1fcc16
+# aicompany-template: stage-build.sh.tpl@bac375918c08c76e7ad891886858f147045ccae8fe71a706ac823d831b189d00
 set -euo pipefail
 # Staged-build engine (v1.13.0, §9.2): all mutation happens in the sibling
 # stage tree; the live tree changes only during a renames-only journaled flip.
@@ -8,7 +8,7 @@ app="/var/www/aiwebsite"; stage="/var/www/aiwebsite.stage"
 trash="$stage/.trash"; state="$stage/.cutover-state"; lockfile="$stage/.lock"
 # Build placement (§9.2 v1.78.0): on local-artifact hosts the VM-side build is
 # REMOVED — build() below refuses structurally (see the 2026-08-08 outage).
-build_mode="remote"
+build_mode="local-artifact"
 
 # Flip set = defaults (regenerated in stage) + host extras (deploy/swap-dirs.txt,
 # copied live->stage as INPUTS and hook-rebuilt there). .env is deliberately
@@ -255,6 +255,86 @@ verify_relocatable() {
 
 check() { (cd "$stage" && npm run config:check); }   # MUST run after db:migrate (drift gate)
 
+# ── Headless browser for the app's playwright-core (v1.161.0, §9.2) ──
+# Hosts whose collectors drive Chromium through playwright-core (itsupportchicago,
+# topmspnearme) had NO deploy-provisioned browser: itsc's was hand-installed and
+# topmspnearme had none, so every nightly "succeeded" with its browser source
+# logged as a launch failure. This step makes the browser part of the deploy.
+#   * The version is never written here: it is the STAGE tree's installed
+#     playwright-core (what goes live at cutover), and the browser comes from
+#     that package's OWN installer (`playwright-core/cli.js install`), so the
+#     Chromium build always matches the code that drives it — no second
+#     package download from npm, no second version number to drift.
+#   * Into the deploy user's ~/.cache/ms-playwright — playwright-core's default
+#     when PLAYWRIGHT_BROWSERS_PATH is unset — OUTSIDE the app tree, so the
+#     deploy's rsync --delete and the generation flip never touch it. The
+#     deploy user owns $app; units that launch the browser must run as that
+#     user (topmspnearme collect-nightly: User=adam_xl_net, the app owner).
+#   * Full Chromium only (--no-shell): the hosts' browser.ts launches
+#     chromium.executablePath() explicitly, never the headless shell.
+#   * Disk is bounded by playwright's own GC: the LIVE tree's package is linked
+#     first (a no-op download when its build is present), then the STAGE's, so
+#     the GC keeps exactly the live + incoming builds — the N-1 generation a
+#     health-gate rollback restores still finds its browser — and deletes older
+#     builds. A 2048MB free-disk floor is checked before any download.
+#   * Memory is bounded by run_capped (MemoryMax, 1800s timeout, sentinel-
+#     covered scope); the system libraries go in through playwright's own
+#     install-deps as root (apt), ONLY when ldd shows the binary cannot load —
+#     a host whose browser already runs (itsc) is a no-op.
+#   * NON-FATAL by design: a CDN or apt outage must not block an app deploy
+#     (the apt-get-update precedent in setup-vm). setup-vm calls this with
+#     `|| echo WARN` and the WARN names what is missing.
+browser() {
+  local pw_rel=node_modules/playwright-core pw_ver live_ver exe missing home_dir browsers_dir free_mb node_bin
+  if [ ! -f "$stage/$pw_rel/package.json" ]; then
+    echo ">>> browser: no playwright-core in the staged app — nothing to provision"
+    return 0
+  fi
+  pw_ver=$(node -p "require('$stage/$pw_rel/package.json').version")
+  home_dir=$(getent passwd "$(id -un)" | cut -d: -f6)
+  browsers_dir="$home_dir/.cache/ms-playwright"
+  echo ">>> browser: playwright-core $pw_ver (staged) -> $browsers_dir (user $(id -un))"
+  mkdir -p "$browsers_dir"
+  free_mb=$(( $(df --output=avail -k "$browsers_dir" | tail -1) / 1024 ))
+  if [ "$free_mb" -lt 2048 ]; then
+    echo "ERROR: browser: ${free_mb}MB free under $browsers_dir < 2048MB floor — not downloading"
+    exit 1
+  fi
+  # Live first (links its build for the GC; downloads only if it is missing),
+  # then stage. PLAYWRIGHT_BROWSERS_PATH is pinned to the default path so the
+  # sudo'd scope (env reset) and the unit (systemd HOME) resolve the same dir.
+  if [ -f "$app/$pw_rel/package.json" ]; then
+    live_ver=$(node -p "require('$app/$pw_rel/package.json').version")
+    echo ">>> browser: linking the live tree's playwright-core $live_ver"
+    run_capped browser-live "$app" env PLAYWRIGHT_BROWSERS_PATH=$browsers_dir node $pw_rel/cli.js install --no-shell --no-progress chromium
+  fi
+  run_capped browser "$stage" env PLAYWRIGHT_BROWSERS_PATH=$browsers_dir node $pw_rel/cli.js install --no-shell --no-progress chromium
+  exe=$(cd "$stage" && PLAYWRIGHT_BROWSERS_PATH="$browsers_dir" node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')
+  if [ ! -x "$exe" ]; then
+    echo "ERROR: browser: $exe is not an executable after install"
+    exit 1
+  fi
+  missing=$(ldd "$exe" 2>/dev/null | grep -c 'not found' || true)
+  if [ "$missing" -gt 0 ]; then
+    echo ">>> browser: $missing shared libraries missing — playwright install-deps chromium (apt, as root, capped)"
+    node_bin=$(command -v node)
+    timeout -k 30 1800 sudo -n systemd-run --quiet --collect --scope \
+      --unit="aiwebsite-stage-browser-deps-$$" -p MemoryMax=5120M \
+      env DEBIAN_FRONTEND=noninteractive "$node_bin" "$stage/$pw_rel/cli.js" install-deps chromium \
+      200>&- 201>&-
+    missing=$(ldd "$exe" 2>/dev/null | grep -c 'not found' || true)
+    if [ "$missing" -gt 0 ]; then
+      echo "ERROR: browser: still $missing missing shared libraries after install-deps:"
+      ldd "$exe" | grep 'not found' | head -5
+      exit 1
+    fi
+  else
+    echo ">>> browser: system libraries present (ldd clean) — install-deps skipped"
+  fi
+  echo ">>> browser: executable $exe"
+  echo ">>> browser: version $("$exe" --version 2>&1 | head -1)"
+}
+
 cutover() {   # deploy mode: RENAMES ONLY (~ms). Full flip set required.
   for p in "${flip_paths[@]}"; do
     [ -e "$stage/$p" ] || { echo "ERROR: $stage/$p not staged — deploy cutover needs the complete set"; exit 1; }
@@ -304,8 +384,8 @@ case "${1:-}" in
   install) take_lock; install_site ;;      install-brain) take_lock; install_brain ;;
   refresh-modules) take_lock; refresh_modules ;;
   build) take_lock; build ;;               verify-relocatable) take_lock; verify_relocatable ;;
-  check) take_lock; check ;;
+  check) take_lock; check ;;               browser) take_lock; browser ;;
   cutover) take_lock; cutover ;;           cutover-repair) take_lock; cutover_repair ;;
   rollback) take_lock; rollback ;;         purge-trash) take_lock; purge_trash ;;
-  *) echo "usage: stage-build.sh heal|prepare|install|install-brain|refresh-modules|build|verify-relocatable|check|cutover|cutover-repair|rollback|purge-trash"; exit 2 ;;
+  *) echo "usage: stage-build.sh heal|prepare|install|install-brain|refresh-modules|build|verify-relocatable|check|browser|cutover|cutover-repair|rollback|purge-trash"; exit 2 ;;
 esac

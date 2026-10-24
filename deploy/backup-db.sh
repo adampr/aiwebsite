@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: backup-db.sh.tpl@060fe015927203443f1e49fb441544c1f5a8f88c1332219a1cb1bf496fd6159b
+# aicompany-template: backup-db.sh.tpl@2bcb8c0c153162b8fa2de20f91616bf10b3ee3c16716c4ff35d09a3dc66a8f2d
 # Nightly pg_dump to a cloud bucket with failure alerting and a success
 # heartbeat (§9.4, from host B's hardened version). Failures email
 # adam@xl.net via Resend; success stamps /var/lib/aiwebsite/last-backup-ok,
@@ -65,8 +65,10 @@ fi
 # permanently-wedged run hides: fd 9 is INHERITED by gsutil/az children, and a
 # measured test confirms an orphaned child keeps the lock after the parent
 # exits — so a wedge is possible and must leave evidence. The 26h backup
-# heartbeat is the outer backstop (watchdog.sh), and RuntimeMaxSec on the unit
-# bounds the wedge itself; this row is what tells the operator WHY.
+# heartbeat is the outer backstop (watchdog.sh), and TimeoutStartSec on the
+# unit bounds the wedge itself (v1.143.0 — v1.114.0 spelled it RuntimeMaxSec,
+# which systemd ignores on Type=oneshot); this row is what tells the operator
+# WHY.
 lock_file="$state_dir/backup-db.lock"
 mkdir -p "$state_dir" 2>/dev/null || true
 if command -v flock >/dev/null 2>&1 && : >>"$lock_file" 2>/dev/null; then
@@ -74,7 +76,7 @@ if command -v flock >/dev/null 2>&1 && : >>"$lock_file" 2>/dev/null; then
   if ! flock -n 9; then
     echo "another backup-db.sh run holds $lock_file — exiting without running"
     record_issue "WARN Database backup skipped (another run holds the lock)" \
-      "backup-db.sh found $lock_file held on $(hostname) at $(date -Is) and exited without backing anything up. One run is normal (an operator ran it by hand while the timer fired). REPEATED rows here mean a previous run never released the lock: check for a wedged process, and note that the aiwebsite-backup unit's RuntimeMaxSec bounds it. The 26h backup-heartbeat check is the outer backstop." \
+      "backup-db.sh found $lock_file held on $(hostname) at $(date -Is) and exited without backing anything up. One run is normal (an operator ran it by hand while the timer fired). REPEATED rows here mean a previous run never released the lock: check for a wedged process, and note that the aiwebsite-backup unit's TimeoutStartSec bounds it. The 26h backup-heartbeat check is the outer backstop." \
       "backup-lock-contended" "0"
     exit 0
   fi
