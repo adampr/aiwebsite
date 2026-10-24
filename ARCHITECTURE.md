@@ -1,6 +1,6 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
-Last verified against code: 2026-10-24 DEPENDENCY ROUND (no route, schema, env or deploy-script change): Next.js 16.4.2 -> **16.4.3** with eslint-config-next 16.4.3 (backport patch: extensionless Google font URLs, proxy.ts no longer loads the app-page runtime, Turbopack loader-invalidation revert, OpenTelemetry trace grouping, no standalone React in server bootstrap; the Stack versions line below is updated; `src/proxy.ts` CSRF behaviour re-verified against a local `next start` of the 16.4.3 artifact: cross-origin POST /api/rfp/documents and /api/checkout 403, site-origin POST reaches the route). docx 9.12.0 -> **9.14.0** (RFP and governance Word export): the Word XML of a real RFP changes only by three additive, render-neutral package defaults: empty `descr`/`title` left out of `wp:docPr`, `w:defaultTabStop` 720 in settings.xml, unused Caption/Bibliography/TOC1..9 style definitions; the round-33 Word XML pin in test:rfpcoverletter is re-pinned with that proof, test:docxnumbering adds style-id uniqueness and the default tab stop; docx no longer depends on xml/xml-js/sax.
+Last verified against code: 2026-10-24 DEPENDENCY ROUND (no route, schema, env or deploy-script change): Next.js 16.4.2 -> **16.4.3** with eslint-config-next 16.4.3 (backport patch: extensionless Google font URLs, proxy.ts no longer loads the app-page runtime, Turbopack loader-invalidation revert, OpenTelemetry trace grouping, no standalone React in server bootstrap; the Stack versions line below is updated; `src/proxy.ts` CSRF behaviour re-verified against a local `next start` of the 16.4.3 artifact: cross-origin POST /api/rfp/documents and /api/checkout 403, site-origin POST reaches the route). docx 9.12.0 -> **9.14.0** (RFP and governance Word export): the Word XML of a real RFP changes only by three additive, render-neutral package defaults: empty `descr`/`title` left out of `wp:docPr`, `w:defaultTabStop` 720 in settings.xml, unused Caption/Bibliography/TOC1..9 style definitions; the round-33 Word XML pin in test:rfpcoverletter is re-pinned with that proof, test:docxnumbering adds style-id uniqueness and the default tab stop; docx no longer depends on xml/xml-js/sax. @anthropic-ai/sdk 0.135.0 -> **1.3.0** (major; API version 2023-06-01 -> 2026-10-21; licence MIT -> Apache-2.0): §5.17.18 updated with the Bearer auth header, one-credential client and no-`?beta=true` route; vision-extract.ts code unchanged.
 
 Last verified against code: 2026-10-24 (scripts/docs only, no deploy) §9.1 / §10 / §11 / §5.22 KEY-ONLY SSH (S9, Adam's decision of 2026-10-23: "Yes, key-only"). xl-ai-web refuses password logins since 2026-10-24 6:21 AM CDT (`/etc/ssh/sshd_config.d/01-key-only.conf`, read before cloud-init's `50-cloud-init.conf`), and `AIWEBSITE_PW` (the VM login password) plus `XLANT_PROXY_SHARED_SECRET` are out of the dev-box `.env`, the VM's live and stage `.env`, the site process env and both pm2 dumps. This commit removes what pointed at the password: the six dead `sshpass` one-off scripts (`deploy/fix-watchdog-storm{,2}.sh`, `deploy/pre-deploy-backup.sh`, `deploy/read-prod-{chat-logs,incident2,incident3}.sh`, unreferenced since 2026-07-10), the empty `AIWEBSITE_PW=` placeholder in `.env.example`, and the "break-glass sshpass" wording in `deploy/site-deploy.env`, here and in `deploy/GO-LIVE.md`. The rendered `deploy/deploy.sh` keeps the module template's generic `sshpass)` branch (module-owned; it cannot work on this host now). Record: aicompany `reviews/2026-10-23-ssh-key-only-S9.md`.
 
@@ -11831,7 +11831,16 @@ PDF, PNG, JPEG or other format, using the Claude SDK.
 **Mechanism.** The site calls the Anthropic Messages API itself through
 `@anthropic-ai/sdk`, reading `ANTHROPIC_API_KEY` from its own environment
 (the same key the brain uses; the brain's `chat.turn` envelope is text-only
-and is not involved). `src/lib/rfp/vision-extract.ts` is SERVER-ONLY; the
+and is not involved). Since 2026-10-24 the SDK is v1 (1.3.0, Apache-2.0,
+API version `2026-10-21`): the key goes out as `Authorization: Bearer`
+(no X-Api-Key), the explicit `apiKey` is the client's only credential (an
+`ANTHROPIC_AUTH_TOKEN` in the environment is ignored), and the beta call
+posts to `/v1/messages` with the beta named by the `anthropic-beta` header
+(no `?beta=true` query); all pinned by the test:anthropicsdk contract. The
+call sends no temperature/top_p/top_k and its document block is in the user
+message, so the 2026-10-21 Messages breaking changes do not apply. A proxy
+or egress filter in front of api.anthropic.com that reads X-Api-Key would
+now see none; the site uses none. `src/lib/rfp/vision-extract.ts` is SERVER-ONLY; the
 client form and the workspace take their constants from client-safe
 `intake.ts`. One call per file: `client.beta.messages.stream({ model:
 "claude-opus-5-5", max_tokens: 64000, output_config: { effort: "low" },

@@ -11,8 +11,10 @@
  *   client.beta.messages.stream({ model, max_tokens, output_config: { effort },
  *     betas: [VISION_FALLBACK_BETA], fallbacks: "default", system, messages },
  *     { timeout, signal }).finalMessage()
- * Checked: one POST to /v1/messages?beta=true with the x-api-key header and
- * the fallback beta in anthropic-beta; the body fields the site sets
+ * Checked: one POST to /v1/messages carrying the key as
+ * `Authorization: Bearer <key>` (no x-api-key), anthropic-version 2026-10-21
+ * and the fallback beta in anthropic-beta, with the explicit apiKey winning
+ * over an ANTHROPIC_AUTH_TOKEN in the environment; the body fields the site sets
  * (stream true, model, max_tokens, output_config, fallbacks, system, the
  * document block before the text block, and no `betas` key leaking into the
  * body); an SSE stream with a fallback marker block and two text blocks maps
@@ -20,7 +22,11 @@
  * a 413 surfaces as Anthropic.APIError and maps to "too_large" without a
  * retry. Added by the 2026-10-19 dependency round 2 (@anthropic-ai/sdk
  * 0.133.0 -> 0.135.0: 0.134.0 changed streaming event handling and added
- * OpenTelemetry tracing, 0.135.0 closes unread streams).
+ * OpenTelemetry tracing, 0.135.0 closes unread streams). Updated by the
+ * 2026-10-24 round (0.135.0 -> 1.3.0, API version 2023-06-01 -> 2026-10-21):
+ * 1.0.0 sends the API key as `Authorization: Bearer` instead of X-Api-Key and
+ * makes a client hold one credential; 1.3.0 stops sending the hard-coded
+ * `?beta=true` query (the beta route is chosen by the anthropic-beta header).
  */
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -65,7 +71,10 @@ const okStream = () =>
 
 async function main() {
   delete process.env.ANTHROPIC_BASE_URL;
-  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  // A token in the environment must be ignored: vision-extract passes apiKey
+  // explicitly, and since 1.0.0 the credential you pass is the only one.
+  process.env.ANTHROPIC_AUTH_TOKEN = "contract-test-not-a-token";
+  delete process.env.ANTHROPIC_PROFILE;
   process.env.ANTHROPIC_API_KEY = "contract-test-not-a-key";
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const h: Record<string, string> = {};
@@ -86,8 +95,10 @@ async function main() {
     check("success: joined text of both text blocks", ok, { ok: true, text: "Page one and page two.", truncated: false });
     check("one request", calls.length, 1);
     const c = calls[0];
-    check("POST /v1/messages?beta=true", [c?.method, c?.url], ["POST", "https://api.anthropic.com/v1/messages?beta=true"]);
-    check("x-api-key is the configured key", c?.headers["x-api-key"], "contract-test-not-a-key");
+    check("POST /v1/messages", [c?.method, c?.url], ["POST", "https://api.anthropic.com/v1/messages"]);
+    check("authorization is Bearer <the configured key>, not the env token", c?.headers["authorization"], "Bearer contract-test-not-a-key");
+    check("no x-api-key header", c?.headers["x-api-key"], undefined);
+    check("anthropic-version is 2026-10-21", c?.headers["anthropic-version"], "2026-10-21");
     check("anthropic-beta carries the fallback beta", (c?.headers["anthropic-beta"] ?? "").split(",").map((s) => s.trim()).includes(VISION_FALLBACK_BETA), true);
     check("body: stream, model, max_tokens, output_config, fallbacks", {
       stream: c?.body.stream, model: c?.body.model, max_tokens: c?.body.max_tokens, output_config: c?.body.output_config, fallbacks: c?.body.fallbacks,
