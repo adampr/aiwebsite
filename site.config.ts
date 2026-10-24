@@ -592,6 +592,12 @@ export const siteConfig = defineSiteConfig({
     // never erase it. coreOriginFirst below is a separate knob that only ranks
     // pages inside the prompt doc - it has no effect on crawl order.
     crawlOrigins: ["https://ai.xl.net", "https://xl.net"],
+    // 2026-10-23 (Adam's decision after the fleet rollout): xl.net's WordPress
+    // remote-publishing endpoint answers an error (HTTP 520 through Cloudflare)
+    // to every GET, so each nightly crawl counted it as one lost page and, since
+    // module v1.169.0, spent ~10 s probing it. Not content; skipped unfetched.
+    // Site-relative prefixes apply to BOTH origins; ai.xl.net has no such path.
+    excludePrefixes: ["/xmlrpc.php"],
     maxPagesPerSite: 1000,
     promptDocMaxChars: 175_000,
     // Legacy priority(): ai.xl.net pages fill the prompt-doc budget first.
