@@ -103,8 +103,9 @@ curl -fsS https://ai.xl.net/api/health
 
 - Commit the pending changes (repo already stages `.gitmodules` +
   `packages/brain`; new/changed: `src/`, `deploy/`, configs).
-- Optional hardening: move the VM SSH password out of `.env` to SSH keys;
-  `pm2 install pm2-logrotate`. (Brain API keys are already in place —
+- ~~Optional hardening: move the VM SSH password out of `.env` to SSH keys~~ —
+  done 2026-10-24: the VM is key-only and the password is out of every `.env`
+  (ARCHITECTURE.md §9.1). `pm2 install pm2-logrotate`. (Brain API keys are already in place —
   `BRAIN_API_KEYS`, fail-closed since brain v1.89.)
 
 ## Troubleshooting

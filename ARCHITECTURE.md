@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-24 (scripts/docs only, no deploy) §9.1 / §10 / §11 / §5.22 KEY-ONLY SSH (S9, Adam's decision of 2026-10-23: "Yes, key-only"). xl-ai-web refuses password logins since 2026-10-24 6:21 AM CDT (`/etc/ssh/sshd_config.d/01-key-only.conf`, read before cloud-init's `50-cloud-init.conf`), and `AIWEBSITE_PW` (the VM login password) plus `XLANT_PROXY_SHARED_SECRET` are out of the dev-box `.env`, the VM's live and stage `.env`, the site process env and both pm2 dumps. This commit removes what pointed at the password: the six dead `sshpass` one-off scripts (`deploy/fix-watchdog-storm{,2}.sh`, `deploy/pre-deploy-backup.sh`, `deploy/read-prod-{chat-logs,incident2,incident3}.sh`, unreferenced since 2026-07-10), the empty `AIWEBSITE_PW=` placeholder in `.env.example`, and the "break-glass sshpass" wording in `deploy/site-deploy.env`, here and in `deploy/GO-LIVE.md`. The rendered `deploy/deploy.sh` keeps the module template's generic `sshpass)` branch (module-owned; it cannot work on this host now). Record: aicompany `reviews/2026-10-23-ssh-key-only-S9.md`.
+
 Last verified against code: 2026-10-23 MODULE PIN @aicompany/core v1.142.2 (`4a6b821`, `release/1.142.x`) -> **v1.171.0** (`af7ef97`), 29 releases in one climb, every MIGRATIONS.md entry v1.143.0..v1.171.0 read and mapped to this host (the pin paragraph below has the per-release effects), AND **BUILD PLACEMENT `remote` -> `local-artifact`** (owner decision, Adam: "Build on the dev box, ship the artifact"): at v1.169.0 the VM-capped build (`BUILD_HEAP_MB=1024`) died in its TypeScript step with "JavaScript heap out of memory" (type check ~1.32 GB, was ~1.15 GB at v1.142.2), so the dev box now builds `.next` (heap `LOCAL_BUILD_HEAP_MB=8192`) and deploy.sh ships it (§9.1/§9.2). Because that build reads the DEV BOX's `.env` (its `DATABASE_URL` is the local dev database), `/sitemap.xml` (was `revalidate = 3600`) and `/work` (was `revalidate = 300`) are now `force-dynamic`: a local build baked the dev DB's 12-loc, one-article sitemap into the artifact. RE-RENDER release: `deploy/setup-vm.sh`, `deploy/backup-db.sh`, `deploy/stage-build.sh`, `deploy/watchdog.sh`, `deploy/deploy.sh` changed (v1.143.0 `TimeoutStartSec` on the blog/backup units, v1.161.0 headless-browser step + earlyoom `--prefer` + browser-only kill WARN, v1.171.0 stamp only, and the build-mode flip); `render.mjs --check` reports all 16 rendered files match. No schema, no env, no site.config change. `package-lock.json`: only the `packages/aicompany` link entry (version + the module's devDependency ranges). New host test `npm run test:aicompany` (`scripts/aicompany-upgrade-contract-tests.ts`) pins this host's assumptions per release. Comment-only: the magic-link request/verify wrappers' "no redirect in the module contract" sentences (module v1.144.0 added an optional field this host does not forward). Time-critical item: v1.168.0 moves narration to gemini-3.8-flash-tts before the vendor shuts gemini-2.5-flash-preview-tts down on 2026-11-17. Same evening: `knowledge.excludePrefixes: ["/xmlrpc.php"]` — xl.net's WordPress remote-publishing endpoint answers HTTP 520 to every GET and was the one page every nightly crawl recorded lost (and, since module v1.169.0, probed for ~10 s); it is not content and is now skipped unfetched (Adam, 2026-10-23).
 
 Last verified against code: 2026-10-21 (docs only: the realtime voice model line in the brain section — the brain's `XAI_REALTIME_MODEL` default, the alias `grok-voice-latest` from Software Brain v1.188 (owner decision: follow xAI's latest voice; it resolved to `grok-voice-3.0` on 2026-10-21); it had still named `grok-voice-think-fast-1.0`. The site code and the production `.env` set no `XAI_REALTIME_MODEL`; no code change, no deploy).
@@ -15725,9 +15727,14 @@ itself.
   present are ignored by this repo's code — but removing them is the leg that
   is actually OUTSTANDING, not the optional tidy-up this bullet used to call
   it. The documented order was value first, key second, rule last; the rule
-  went first on 2026-09-19, so what remains is the live
+  went first on 2026-09-19, so what remained was the live
   `XLANT_PROXY_SHARED_SECRET` sitting in the VM's `.env` AND in this
-  checkout's `.env` on the dev box. See the durable facts below.
+  checkout's `.env` on the dev box. **Done 2026-10-24 (S9, Adam's "Yes,
+  remove it"):** the key is out of the dev-box `.env`, the VM's live and
+  stage `.env`, the site process env and both pm2 dumps (blanked by one pm2
+  reload, saved twice, then the line deleted). Still open, and not this
+  repo's: rotating that secret on the relay itself (xl-xlant-app), Adam's
+  call. See the durable facts below.
 - `seo.extraRobotsDisallow` dropped `"/internal"` (site.config.ts): the tree
   is a 404 and was never in the sitemap.
 
@@ -17107,8 +17114,13 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
 2. Transport per `site-deploy.env`: **`ssh-key`** since 2026-07-12 (dev-box key
    `~/.ssh/id_ed25519` authorized on the VM; key path from `AIWEBSITE_SSH_KEY` in
    `.env`, else `SSH_KEY_PATH`; `AIWEBSITE_SSH_IP`/`AIWEBSITE_USER` read **literally**
-   from `.env`, never sourced). The legacy `sshpass` transport (`AIWEBSITE_PW` +
-   explicit `--allow-sshpass` flag) remains only as a break-glass fallback.
+   from `.env`, never sourced). **The VM is key-only since 2026-10-24** (S9:
+   `/etc/ssh/sshd_config.d/01-key-only.conf` sets `PasswordAuthentication no` ahead of cloud-init's
+   `50-cloud-init.conf`, so neither cloud-init nor an Azure VMAccess password reset re-opens it), and the
+   login password is in no `.env`: the module template's `sshpass` transport (`<PREFIX>_PW` +
+   `--allow-sshpass`) still exists in the rendered `deploy.sh` but cannot work on this host. If the dev-box
+   key is lost: Azure Run Command (root, through the VM agent), or a VMAccess key reset
+   (`az vm user update --ssh-key-value …`), or a VMAccess password reset plus the serial console.
    (A `gcloud-iap` variant exists for GCP.)
 3. `rsync -az --delete` repo → `/var/www/aiwebsite`, **excluding** `.git`, `node_modules`,
    `.next`, brain caches, `.env`, `/data/` (VM-generated knowledge must survive the delete),
@@ -17704,7 +17716,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
 | Misc | `AUTOMATION_SECRET` (skills-host), `DEFAULT_BRAIN_NAME`, `DEFAULT_PURPOSE` | brain persona defaults |
 | Build | `SKIP_ENV_VALIDATION` | set by `next build` only — skips the module's runtime env validation |
-| Deploy | `AIWEBSITE_SSH_IP` (52.237.160.75), `AIWEBSITE_USER` (xladmin), `AIWEBSITE_SSH_KEY` (optional key path; default `SSH_KEY_PATH=~/.ssh/id_ed25519` — ssh-key transport, current since 2026-07-12), `AIWEBSITE_PW` (legacy sshpass transport, break-glass only; deploy.sh requires `--allow-sshpass`) | consumed only by deploy.sh on the dev box, read literally |
+| Deploy | `AIWEBSITE_SSH_IP` (52.237.160.75), `AIWEBSITE_USER` (xladmin), `AIWEBSITE_SSH_KEY` (optional key path; default `SSH_KEY_PATH=~/.ssh/id_ed25519` — ssh-key transport, current since 2026-07-12) — no password key: the VM is key-only since 2026-10-24 (`AIWEBSITE_PW` removed everywhere, §9.1) | consumed only by deploy.sh on the dev box, read literally |
 
 ---
 
@@ -17719,7 +17731,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | **Microsoft Entra** | App `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` (creatable via `az ad app create`), redirect `https://ai.xl.net/auth/microsoft/callback` |
 | **Stripe** | Account with a secret API key (`STRIPE_SECRET_KEY`); no dashboard product setup required (inline `price_data`), but receipt emails should be enabled in dashboard settings. Purchases/subscriptions are managed in the dashboard (no local orders table) |
 | **OpenAI / xAI / Anthropic / Deepgram / Tavily** | API keys per §10 |
-| **Azure VM** | Ubuntu-family box, ssh password auth for deploy.sh (hardening note in GO-LIVE.md: switch to keys) |
+| **Azure VM** | Ubuntu-family box, SSH **key-only** since 2026-10-24 (deploy.sh's ssh-key transport; break-glass: Azure Run Command or VMAccess, §9.1) |
 
 ---
 
