@@ -96,7 +96,7 @@
     "@anthropic-ai/sdk": "^0.135.0",
     "@breezystack/lamejs": "^1.2.7",
     "docx": "^9.12.0",
-    "dotenv": "^18.0.8",
+    "dotenv": "^18.0.9",
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.4",
     "jszip": "^3.10.2",
