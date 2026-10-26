@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@babbbd5b8bc48e2c0ec2014ae62f7552d7f8639264b39bab7851005d6ef1051e
+# aicompany-template: watchdog.sh.tpl@e0447b622b1b99fda5e225c32d240580dfa04636dcbf62075054b0e4e9b5dcfd
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -51,6 +51,8 @@ throttle_dir="/tmp/aiwebsite-watchdog-throttle"
 issue_throttle_seconds=86400  # 24 hours per unique issue
 check_interval=60
 page_check_every=5            # run page checks every Nth iteration (5 × 60s = 5 min)
+posture_check_every=60        # v1.174.0: posture drift check on the first standard pass after a start, then every 60th (~1 h)
+posture_bin="/usr/local/bin/aiwebsite-posture-check.sh"  # root-owned copy setup-vm installs (never the tree's file)
 stale_seconds=93600           # 26h — backup heartbeat + knowledge doc freshness
 earlyoom_scan_stamp="/var/run/aiwebsite-watchdog-earlyoom-scan"  # journal-scan cursor (v1.15.0)
 notify_to="adam@xl.net"
@@ -750,6 +752,50 @@ check_synth_heartbeat() {
   return 0
 }
 
+# ── Posture drift (v1.174.0, §9.5) — LEDGER-ONLY, never mails ─────
+# The same read-only script setup-vm runs at the end of every deploy (where a
+# FAIL fails the deploy loudly): the site, brain-api and skills-host listen on
+# loopback only, and pm2's boot unit is armed. Here it catches what happens
+# BETWEEN deploys (a hand `pm2 start` without the ecosystem env, a brain bump
+# that adds a listener, a disabled unit, a removed node tree under ExecStart).
+# A FAIL records one WARN row (emailed:false; the row's count/last_seen bump
+# hourly while it stands) and owes a resolve; the next clean run pays it. One
+# resolve is also owed at process start, so a row recorded before a restart or
+# a reboot is closed by the first clean run (the synth-heartbeat rule). Exit 2
+# (the check could not run) records nothing: it is logged.
+posture_resolve_owed=1
+check_posture() {
+  if [[ ! -x "$posture_bin" ]]; then
+    log "INFO: $posture_bin not installed yet; posture check skipped"
+    return 0
+  fi
+  local out rc
+  # timeout: a wedged systemctl/ss must not stall the watchdog loop (refuter A-N5);
+  # timeout's own 124 lands in the "could not run" branch below.
+  out=$(timeout 60 "$posture_bin" --user "$pm2_user" 2>&1 9>&-)
+  rc=$?
+  if (( rc == 1 )); then
+    local fails n
+    fails=$(printf '%s\n' "$out" | grep '^FAIL ' || true)
+    n=$(printf '%s\n' "$fails" | grep -c '^FAIL ' || true)
+    log "WARN: posture drift: $n FAIL line(s): $(printf '%s' "$fails" | head -3 | tr '\n' ' ')"
+    record_issue "WARN posture drift: $n check(s) failed (loopback listeners / pm2 boot-start)" \
+      "$fails"$'\n\n'"Read-only check: $posture_bin --user $pm2_user (deploy/RUNBOOK.md: Posture check). Each FAIL line names its fix. The next deploy re-arms an unarmed pm2 boot unit and fails loudly if a listener is still beyond loopback; this row closes on the first clean hourly run." \
+      "posture-drift" 0
+    posture_resolve_owed=1
+  elif (( rc == 0 )); then
+    if [[ "$posture_resolve_owed" == "1" ]]; then
+      record_issue "WARN posture holds again (listeners loopback-only, pm2 boot-start armed)" \
+        "self-healed: $posture_bin --user $pm2_user exited 0 on a later watchdog pass." \
+        "posture-drift" 0 1 "auto:self-healed"
+      posture_resolve_owed=0
+    fi
+  else
+    log "WARN: posture check could not run (exit $rc): $(printf '%s' "$out" | tail -1)"
+  fi
+  return 0
+}
+
 check_freshness() {
   # Heartbeat check applies only when setup-vm enabled the backup timers
   # (BACKUP_BUCKET set) — otherwise it would alert nightly about a timer
@@ -1161,6 +1207,12 @@ while true; do
 
   # 8. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)
   check_freshness
+
+  # 8b. Posture drift (v1.174.0): first pass after a (re)start, then ~hourly.
+  # Not while a deploy holds the marker: its own end-of-deploy check owns that window.
+  if (( (standard_pass - 1) % posture_check_every == 0 )) && ! deploy_in_progress; then
+    check_posture
+  fi
 
   # 9. Page-render checks (every 5th standard pass = 5 minutes)
   if (( standard_pass % page_check_every == 0 )); then

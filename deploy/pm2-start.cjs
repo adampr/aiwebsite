@@ -1,4 +1,4 @@
-// aicompany-template: pm2-start.cjs.tpl@7d41524203ae3bfc846fe18e2a0fd1e4afd54d1ef8c1dda29216aa7967ba9e81
+// aicompany-template: pm2-start.cjs.tpl@ff64df0e3f191aa871b60a6888958957a30e73c2f470aef1546c2fd1d5c8f7ce
 /**
  * Thin wrapper around `next start` that sends PM2 the "ready" signal
  * once the HTTP server is actually listening.
@@ -25,9 +25,18 @@ if (!fs.existsSync(nextBin) || !fs.existsSync(buildId)) {
   process.exit(1);
 }
 
+// Loopback only (v1.174.0, §9.1): without -H, `next start` binds every
+// interface (`*:3000`, measured 2026-10-23 on four hosts). nginx is its
+// only legitimate client (proxy_pass http://127.0.0.1:3000), and so are
+// the watchdog, the deploy health gate and the poll below. The hostname also
+// becomes Next's internal origin (http://127.0.0.1:3000), which is what
+// the §5.6 tracking beacon's loopback self-fetch dials — the same address it
+// listens on. xlant.ai has run `next start --hostname 127.0.0.1` since 2026-09-06.
+const LISTEN_HOST = '127.0.0.1';
+
 const child = spawn(
   process.execPath,
-  ['node_modules/.bin/next', 'start', '-p', String(PORT)],
+  ['node_modules/.bin/next', 'start', '-p', String(PORT), '-H', LISTEN_HOST],
   { stdio: 'inherit', cwd: process.env.PM2_CWD || process.cwd() }
 );
 
@@ -40,7 +49,7 @@ const timer = setInterval(() => {
     clearInterval(timer);
     return;
   }
-  const req = http.get('http://127.0.0.1:' + PORT + '/api/health', (res) => {
+  const req = http.get('http://' + LISTEN_HOST + ':' + PORT + '/api/health', (res) => {
     if (res.statusCode === 200 && typeof process.send === 'function') {
       process.send('ready');
     }

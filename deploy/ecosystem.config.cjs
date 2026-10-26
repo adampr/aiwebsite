@@ -1,4 +1,4 @@
-// aicompany-template: ecosystem.config.cjs.tpl@9b3c15c8780fd0620226b05c072aa79229d117495abbb276360da6bc81b833a9
+// aicompany-template: ecosystem.config.cjs.tpl@5787173c26ad9252d543f3c0a339e08c459ad17b4823107149866a2e6ee11369
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -35,6 +35,18 @@ try {
 const SITE_INTERPRETER = '';
 const BRAIN_INTERPRETER = '';
 
+// Loopback-only listeners (v1.174.0, §9.1). The site binds 127.0.0.1 through
+// `next start -H 127.0.0.1` (deploy/pm2-start.cjs). brain-api and skills-host
+// take no host from the SDK, so this preload pins their no-host listen() to
+// 127.0.0.1. NODE_OPTIONS, not node_args: the pm2 script is tsx's CLI, which
+// re-spawns the server as a child node process, and only the environment
+// reaches the child. The path is the ROOT-OWNED copy setup-vm installs from
+// deploy/listen-loopback.cjs BEFORE the cutover, not the tree file: pm2 keeps
+// an env key the ecosystem later drops (decision 17 item 3), so after a module
+// rollback (whose rsync --delete removes the tree file) a tree path would make
+// node refuse to start the brain. Quoted for node's NODE_OPTIONS parser.
+const LOOPBACK_PRELOAD = '--require ' + JSON.stringify('/usr/local/lib/aiwebsite/listen-loopback.cjs');
+
 module.exports = {
   apps: [
     {
@@ -69,6 +81,7 @@ module.exports = {
         BRAIN_DB_BACKEND: 'postgres',
         BRAIN_DB_TABLE_PREFIX: 'brain_',
         SOFTWARE_BRAIN_ENV_PATH: APP_ROOT + '/.env',
+        NODE_OPTIONS: LOOPBACK_PRELOAD,
       },
       instances: 1,
       autorestart: true,
@@ -96,6 +109,7 @@ module.exports = {
         SOFTWARE_BRAIN_ENV_PATH: APP_ROOT + '/.env',
         AUTOMATION_SECRET: envFromFile.AUTOMATION_SECRET || '',
         NEXTJS_BASE_URL: 'http://127.0.0.1:3000',
+        NODE_OPTIONS: LOOPBACK_PRELOAD,
       },
       instances: 1,
       autorestart: true,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@5d76a3b41154bc22d2e37d455c2f9a576c7ef670f16725dca0695a9aa0c0b8dd
+# aicompany-template: setup-vm.sh.tpl@9a9315d6cd0140a85ac922cf2e180aa973666fb9fe6e4e3657fecdd0ae7317cc
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -765,6 +765,16 @@ else
   (cd "$stage_dir" && npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out "$app_dir/deploy/seed-persona-memories.sql")
 fi
 
+# ── Loopback preload (v1.174.0, §9.1) — BEFORE the bracket ──────
+# The ecosystem's NODE_OPTIONS=--require names this ROOT-OWNED copy; it must
+# exist before `pm2 startOrReload` below starts brain-api/skills-host with it.
+# Not a live-tree mutation (the bracket's renames-only rule is untouched), and
+# inert until pm2 loads it. It is never removed by a rollback, by design.
+# >>> loopback-preload-install
+sudo install -d -m 755 /usr/local/lib/aiwebsite
+sudo install -m 644 "$app_dir/deploy/listen-loopback.cjs" /usr/local/lib/aiwebsite/listen-loopback.cjs
+# <<< loopback-preload-install
+
 # ── CUTOVER BRACKET (renames only; the only live-tree mutation) ──
 # Extra services stop only for the flip so native-ABI trees never change under
 # a running service (the 2026-07-10 roleplay class) — a seconds-wide window.
@@ -921,7 +931,48 @@ if [ "$build_mode" = "local-artifact" ]; then
   done
 fi
 pm2 save 200>&- 201>&-
-pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- 201>&- || true
+
+# ── pm2 boot-start (v1.174.0, §9.2) ──────────────────────────────
+# `pm2 startup` writes /etc/systemd/system/pm2-<user>.service and enables it,
+# but ONLY as root. As any other user pm2 7 prints a `sudo env PATH=… pm2
+# startup …` hint and returns an error (lib/API/Startup.js isNotRoot), which
+# the pre-v1.174.0 `pm2 startup … 2>/dev/null || true` swallowed: the template
+# never armed boot start on a non-root deploy user. It existed only where
+# someone ran that hint by hand (aiwebsite, roleplay, itsupportchicago) or wrote
+# the unit (topmspnearme, S11 2026-10-23). Now, when the unit is NOT armed (the
+# boot rules of deploy/posture-check.sh), the hint runs here through sudo with
+# this shell's PATH, so the unit's PATH line resolves the node the apps run;
+# the posture check at the end of this script fails the deploy loudly if it is
+# still not armed. An ARMED unit is never rewritten, so a hand-made unit and its
+# drop-ins (topmspnearme's s11.conf) stay byte-identical. `pm2 startup` never
+# connects to or spawns a pm2 daemon (CLI.js parses `startup` without
+# pm2.connect), so the sudo call cannot start root's daemon. It writes the
+# unit, runs `systemctl enable`, and (pm2's client constructor,
+# initFileStructure) creates root's empty ~/.pm2 skeleton (logs/, pids/,
+# modules/, module_conf.json, touch), as every earlier hand-run hint already
+# did on all four hosts (refuter A-S1, 2026-10-26). ExecStart is
+# require.main.filename with symlinks resolved, so on a tarball-node host it
+# names a VERSIONED tree; roleplay pins a stable path with a host drop-in
+# (deploy/RUNBOOK.md: Posture check).
+# >>> pm2-boot-arm
+pm2_boot_user="$(whoami)"
+# Captured, then matched from a here-string: under pipefail, `check | grep -q`
+# takes the check's exit 1 (or a SIGPIPE) and would read a FAIL as "armed".
+pm2_boot_report="$(bash deploy/posture-check.sh --user "$pm2_boot_user" 2>/dev/null || true)"
+if grep -q '^FAIL boot ' <<< "$pm2_boot_report"; then
+  echo ">>> pm2 boot-start is NOT armed for $pm2_boot_user: arming pm2-$pm2_boot_user.service (pm2 startup systemd)..."
+  pm2_bin="$(command -v pm2)"
+  if [ "$(id -u)" -eq 0 ]; then
+    "$pm2_bin" startup systemd -u "$pm2_boot_user" --hp "$HOME" 200>&- 201>&- \
+      || echo "WARN: pm2 startup exited non-zero; the posture check at the end of this deploy decides"
+  else
+    sudo env PATH="$PATH" "$pm2_bin" startup systemd -u "$pm2_boot_user" --hp "$HOME" 200>&- 201>&- \
+      || echo "WARN: sudo pm2 startup exited non-zero; the posture check at the end of this deploy decides"
+  fi
+else
+  echo ">>> pm2 boot-start armed (pm2-$pm2_boot_user.service): left as it is"
+fi
+# <<< pm2-boot-arm
 
 # pm2-logrotate: 10M per file, retain 7 (§9.5 default-on log rotation)
 pm2 install pm2-logrotate >/dev/null 2>&1 200>&- 201>&- || true
@@ -949,6 +1000,9 @@ echo ">>> Installing ops scripts..."
 sudo install -m 755 "$app_dir/deploy/backup-db.sh"          /usr/local/bin/aiwebsite-backup-db.sh
 sudo install -m 755 "$app_dir/deploy/restore-drill.sh"      /usr/local/bin/aiwebsite-restore-drill.sh
 sudo install -m 755 "$app_dir/deploy/retention-sweeper.sh"  /usr/local/bin/aiwebsite-retention-sweeper.sh
+# v1.174.0: the watchdog (root) runs this ROOT-OWNED copy, never the tree's file,
+# which the deploy user can write.
+sudo install -m 755 "$app_dir/deploy/posture-check.sh"      /usr/local/bin/aiwebsite-posture-check.sh
 
 # Daily disk check (§9.5: alert at >80%). Small enough to live inline here.
 sudo tee /usr/local/bin/aiwebsite-disk-check.sh >/dev/null <<'EOS'
@@ -1508,11 +1562,26 @@ npm run --silent upgrade:check -- --stamp 200>&- 201>&- || \
 # deploy deliberately leaves the marker to age out over the TTL (§9.5).
 sudo rm -f "$deploy_marker"
 
+# ── Posture check (v1.174.0, §9.1 / §9.5): REPORT here, FAIL in deploy.sh ──
+# Read-only, after the marker is cleared and every step above has run. It only
+# REPORTS here: an exit 1 from setup-vm would stop deploy.sh before its own
+# health curls, roleplay's extra-services verify and the post-deploy sweep
+# (refuter A-S2). deploy.sh runs the same check again after those and fails
+# the deploy there; nothing is rolled back. Listeners: the site, brain-api and
+# skills-host bound to loopback only. Boot: pm2-<user>.service armed (above).
+# >>> posture-final
+echo ">>> Posture check: internal listeners on loopback only, pm2 boot-start armed..."
+if ! bash deploy/posture-check.sh --user "$pm2_boot_user"; then
+  echo "!!! POSTURE CHECK FAILED (the FAIL lines above): deploy.sh fails the deploy after its own verification and the synthetic sweep."
+fi
+# <<< posture-final
+
 echo ""
 echo "=== Setup complete ==="
 echo "Local checks:"
 echo "  curl -fsS http://127.0.0.1:3000/api/health          # Next.js"
 echo "  curl -fsS http://127.0.0.1:3211/health            # brain-api"
+echo "  bash deploy/posture-check.sh                               # loopback-only listeners + pm2 boot-start"
 echo "  systemctl list-timers 'aiwebsite-*'                          # all 7 timers present (+ blog when BLOG_ENABLED=1)"
 echo "Public check (after the human DNS step propagates):"
 echo "  curl -fsS https://ai.xl.net/api/health"

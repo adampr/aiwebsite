@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@b440c4a4c2d9c1a598bf76e8647d48d3aa31337e23e15a6a24293d10727bdb2a
+# aicompany-template: deploy.sh.tpl@dacb3aafa9cc94cbb37d5501add1f023dbcff1d05961526bac7eb685da8f91f4
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -777,3 +777,22 @@ if [ -f "$synth_runner" ] && [ -f "$repo_dir/deploy/synth-inventory.json" ]; the
 else
   echo "NOTE: synth-sweep runner or deploy/synth-inventory.json absent — post-deploy sweep skipped."
 fi
+
+# ── Posture gate (v1.174.0, §9.1 / §9.2): the loud half, LAST ────
+# The read-only deploy/posture-check.sh (setup-vm already printed it): the site,
+# brain-api and skills-host listen on loopback only, and pm2-<deploy user>.service
+# is armed for boot. It fails the deploy only AFTER the health curls, the
+# extra-services verify and the sweep above have run, so a red deploy still says
+# whether the new build is healthy (refuter A-S2). Nothing is rolled back.
+# run_remote collapses the exit code to 0/1 on IAP; 0 / non-0 is all this needs.
+# No --user: the check defaults to the owner of /var/www/aiwebsite, which IS the deploy
+# user on every transport (the GCP wrappers' SA path defines it that way), and a
+# remote `$(whoami)` would be expanded by whichever shell the transport runs first.
+# >>> posture-gate
+echo ">>> Posture check (fails the deploy AFTER verification and the sweep; nothing is rolled back)..."
+if ! run_remote "cd $app_dir && bash deploy/posture-check.sh"; then
+  echo "!!! POSTURE CHECK FAILED — the deploy IS live and verified above; fix each FAIL line, then re-run bash deploy/posture-check.sh on the VM (deploy/RUNBOOK.md: Posture check)." >&2
+  exit 1
+fi
+echo ">>> Posture holds."
+# <<< posture-gate
