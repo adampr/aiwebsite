@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// aicompany-template: pm2-drift-check.cjs.tpl@6d44048ae9bea05206a8818f605bb968f505e5f16367a2be60c0b793391afa63
+// aicompany-template: pm2-drift-check.cjs.tpl@f730fa41850ac36f359d5694de1e0c07e5139be6b9702cbfbc5a0c5b0382079b
 // aiwebsite pm2 drift check (v1.175.0, architecture.md §9.10; S12 P1 / refuter 2S2).
 // READ-ONLY. Prints NAMES only — never an env value.
 //
@@ -50,6 +50,12 @@ const WRAPPER_ENV = {
 };
 // Keys the pm2 7.0 CLI itself sets in the environment it passes on.
 const PM2_CLI_ENV = ['PM2_USAGE', 'PM2_JSON_PROCESSING', 'PM2_PROGRAMMATIC', 'NODE_APP_INSTANCE'];
+// pm2 7.0.3 also sets PWD to the app's cwd when the CLI environment has none
+// (measured on aiwebsite 2026-10-26, the first split start under env -i: top
+// level and .env, every app). Allowed by name ONLY with a value exactly equal
+// to that app's configured cwd; any other value is drift. Absent is fine (it is
+// not a code-path key, so the missing-key rule does not apply) (v1.175.1).
+const PM2_CWD_ENV = 'PWD';
 // pm2's own attribute names (pm2_env top level). Measured on pm2 7.0.3 (jlist,
 // 2026-10-26) plus pm2's documented ecosystem attributes. None of these loads
 // code except the ones compared by value below; an UNKNOWN name fails closed
@@ -152,12 +158,16 @@ function checkOne(spec, e, label, findings) {
   if (e.exec_mode && e.exec_mode !== 'fork_mode') f('exec_mode is not fork_mode');
   for (const k of MUST_BE_ABSENT) if (k !== 'pmx_module' && e[k] != null && e[k] !== '') f(k + ' is set');
   const expectedEnv = { ...WRAPPER_ENV, ...spec.env };
-  const allowed = new Set([...Object.keys(spec.env), ...Object.keys(WRAPPER_ENV), ...PM2_CLI_ENV, ...PM2_META, ...spec.optionKeys, spec.name]);
+  const allowed = new Set([...Object.keys(spec.env), ...Object.keys(WRAPPER_ENV), ...PM2_CLI_ENV, PM2_CWD_ENV, ...PM2_META, ...spec.optionKeys, spec.name]);
   const extra = new Set();
   for (const k of Object.keys(e)) if (!allowed.has(k)) extra.add(k);
   const subEnv = e.env && typeof e.env === 'object' ? e.env : {};
   for (const k of Object.keys(subEnv)) if (!allowed.has(k)) extra.add(k);
   for (const k of [...extra].sort()) f('env key ' + safeName(k) + ' is not in the rendered ecosystem or the wrapper environment');
+  for (const [where, src] of [['', e], ['env.', subEnv]]) {
+    if (PM2_CWD_ENV in src && String(src[PM2_CWD_ENV]) !== spec.cwd)
+      f('value of ' + where + PM2_CWD_ENV + " is not the app's cwd (value not printed)");
+  }
   for (const k of CODE_PATH_KEYS) {
     if (!(k in expectedEnv)) continue; // not set for this app: an unexpected name is reported above
     // An EXPECTED key that is gone (deleted, or stripped) is drift too (refuter S1).
