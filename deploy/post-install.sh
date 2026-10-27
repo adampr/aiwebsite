@@ -463,8 +463,14 @@ done
 
 # ── Manifest cleanup for the chase family (the governance glob below is
 # prefix-scoped and does NOT cover these, exactly as with linkcheck).
+# All three cleanups skip `<unit>.d` drop-in DIRECTORIES (`grep -v '\.d$'`; no
+# unit name ends in .d): under the module's app account split (v1.175.x §9.10)
+# `deploy/app-user.sh ensure` puts 60-aicompany-app-user.conf in
+# aiwebsite-{chase,chase-report,governance,linkcheck}.service.d, and app-user.sh
+# owns them (rollback removes them). On 2026-10-26 10:32 PM CDT the first split
+# deploy failed here, before cutover: `rm -f` on aiwebsite-chase-report.service.d.
 CHASE_MANIFEST="aiwebsite-chase.service aiwebsite-chase.timer aiwebsite-chase-alert.service aiwebsite-chase-report.service aiwebsite-chase-report.timer aiwebsite-chase-report-alert.service"
-for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-chase' || true); do
+for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-chase' | grep -v '\.d$' || true); do
   case " $CHASE_MANIFEST " in
     *" $unit "*) ;;
     *)
@@ -478,7 +484,7 @@ done
 # ── Manifest cleanup for the linkcheck family (same rename/removal safety
 # as governance below; its glob is prefix-scoped and does NOT cover these).
 LINKCHECK_MANIFEST="aiwebsite-linkcheck.service aiwebsite-linkcheck.timer aiwebsite-linkcheck-alert.service"
-for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-linkcheck' || true); do
+for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-linkcheck' | grep -v '\.d$' || true); do
   case " $LINKCHECK_MANIFEST " in
     *" $unit "*) ;;
     *)
@@ -492,7 +498,7 @@ done
 # ── Manifest cleanup: disable any aiwebsite-governance* unit this script no
 # longer installs (rename/removal safety).
 MANIFEST="aiwebsite-governance.service aiwebsite-governance.timer aiwebsite-governance-alert.service"
-for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-governance' || true); do
+for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-governance' | grep -v '\.d$' || true); do
   case " $MANIFEST " in
     *" $unit "*) ;;
     *)
