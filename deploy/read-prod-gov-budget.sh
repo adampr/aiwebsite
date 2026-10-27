@@ -10,25 +10,26 @@ ssh_key="$(envval AIWEBSITE_SSH_KEY)"; ssh_key="${ssh_key:-~/.ssh/id_ed25519}"; 
 ssh -i "$ssh_key" -o StrictHostKeyChecking=accept-new "$(envval AIWEBSITE_USER)@$(envval AIWEBSITE_SSH_IP)" '
   set -e
   cd /var/www/aiwebsite
+  pm2x() { if bash deploy/app-user.sh status 2>/dev/null | grep -q "^app-user: ACTIVE"; then bash deploy/app-user.sh pm2 "$@"; else pm2 "$@"; fi; }   # v1.175.0: never a bare pm2 as xladmin under the split
   echo "== deploy marker (fresh <30min ⇒ research kicks park as queued) =="
   ls -la /var/run/aiwebsite-deploy-in-progress 2>/dev/null || echo "absent (good)"
   date -u
   echo "== .env caps on disk =="
   grep -E "^GOVERNANCE_(TAVILY|BRAIN)_DAILY_CAP=" .env || echo "unset (code defaults 300/1500)"
   echo "== caps in the RUNNING pm2 process env (per app) =="
-  pm2 jlist 2>/dev/null | python3 -c "
+  pm2x jlist 2>/dev/null | python3 -c "
 import json,sys
 for p in json.load(sys.stdin):
     e = p.get(\"pm2_env\", {})
     caps = {k: e[k] for k in e if k.startswith(\"GOVERNANCE_\")}
     print(p[\"name\"], \"uptime_since:\", e.get(\"pm_uptime\"), caps or \"(no GOVERNANCE_* vars)\")"
   echo "== caps in the ACTUAL process environment (/proc, ground truth) =="
-  site_pid=$(pm2 jlist 2>/dev/null | python3 -c "
+  site_pid=$(pm2x jlist 2>/dev/null | python3 -c "
 import json,sys
 pids = [p.get(\"pid\") for p in json.load(sys.stdin) if p.get(\"name\") == \"aiwebsite\"]
 print(pids[0] if pids and pids[0] else \"\")" || true)
-  if [ -n "$site_pid" ] && [ -r "/proc/$site_pid/environ" ]; then
-    tr "\0" "\n" < "/proc/$site_pid/environ" | grep -E "^GOVERNANCE_" || echo "no GOVERNANCE_* in live env"
+  if [ -n "$site_pid" ] && sudo -n test -r "/proc/$site_pid/environ"; then
+    sudo -n cat "/proc/$site_pid/environ" | tr "\0" "\n" | grep -E "^GOVERNANCE_" || echo "no GOVERNANCE_* in live env"
   else
     echo "aiwebsite not running in pm2 (no live pid) — skipping /proc check"
   fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: posture-check.sh.tpl@965a80dc8552987c9ccb966ec117fd1bafa9af66f7a72d0c2de4b143a9335342
+# aicompany-template: posture-check.sh.tpl@4ede9549d833f7b3ddeda013921a7e3ce236bf4856365af091215ab8aa254045
 # aiwebsite posture check (v1.174.0, architecture.md §9.1 / §9.5). READ-ONLY: it
 # changes nothing on the box and prints no secret.
 #
@@ -17,6 +17,13 @@
 #      nginx and cloudflared in front of apps that never start. Before v1.174.0
 #      setup-vm's `pm2 startup … || true` was a silent no-op for every non-root
 #      deploy user (S11, 2026-10-23).
+#   3. app account (v1.175.0, §9.10) — only while the app account split is
+#      active (APP_USER rendered AND /etc/aiwebsite/app-user names it): one pm2
+#      daemon, the unit's, running as the app account; the deploy user's old
+#      unit off; no app process as the deploy user; the pm2 drift check clean
+#      (live and dump) and no unacknowledged repaired drift; no pm2 module,
+#      crontab, ~/.ssh or ~/.npmrc under the app account. --user defaults to the
+#      app account then.
 # INFO lines are never a failure: a port nothing listens on (the health checks
 # own a down service), other non-loopback TCP listeners besides sshd, and
 # whether the pm2 daemon runs inside the unit (that matters for shutdown order
@@ -31,6 +38,20 @@
 # Exit:  0 posture holds · 1 at least one FAIL · 2 the check could not run.
 set -uo pipefail
 
+# >>> app-user-active
+# §9.10 (v1.175.0): the app account split is ACTIVE only when the rendered name
+# is set AND the root-owned marker names it. This region is byte-identical in
+# every template that carries it (tests/app-user-split.test.ts pins that).
+app_user='aiwebsite'
+app_user_marker="/etc/aiwebsite/app-user"
+app_user_active() {
+  [ -n "$app_user" ] || return 1
+  [ -f "$app_user_marker" ] && [ ! -L "$app_user_marker" ] || return 1
+  [ "$(stat -c %u "$app_user_marker" 2>/dev/null)" = "0" ] || return 1
+  [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
+}
+# <<< app-user-active
+
 user=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +61,7 @@ while [ $# -gt 0 ]; do
     *) echo "posture-check: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
+if [ -z "$user" ] && app_user_active; then user="$app_user"; fi
 [ -n "$user" ] || user="$(stat -c %U "/var/www/aiwebsite" 2>/dev/null || true)"
 if [ -z "$user" ]; then echo "posture-check: cannot determine the pm2 user (pass --user)" >&2; exit 2; fi
 for tool in ss systemctl getent; do
@@ -142,6 +164,68 @@ else
     esac
   fi
 fi
+
+# ── 3. app account (v1.175.0, §9.10) ───────────────────────────────
+# >>> app-user-posture
+if app_user_active; then
+  tree_user="$(stat -c %U "/var/www/aiwebsite" 2>/dev/null || true)"
+  app_home="/home/$app_user"
+  app_env_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  if [ -n "" ]; then app_env_path=":$app_env_path"; fi
+  # root (the watchdog) reads through runuser; the deploy user through sudo -n.
+  # The drift check `require`s the tree's ecosystem, so it never runs as root.
+  priv()    { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi; }
+  as_tree() { if [ "$(id -u)" -eq 0 ]; then runuser -u "$tree_user" -- "$@"; else "$@"; fi; }
+  app_cli() {
+    if [ "$(id -u)" -eq 0 ]; then
+      runuser -u "$app_user" -- env -i HOME="$app_home" PM2_HOME="$app_home/.pm2" PATH="$app_env_path" LANG=C.UTF-8 NPM_CONFIG_USERCONFIG="/etc/aiwebsite/npmrc-empty" pm2 "$@"
+    else
+      sudo -n -u "$app_user" -H env -i HOME="$app_home" PM2_HOME="$app_home/.pm2" PATH="$app_env_path" LANG=C.UTF-8 NPM_CONFIG_USERCONFIG="/etc/aiwebsite/npmrc-empty" pm2 "$@"
+    fi
+  }
+  before=$fails
+  old_unit="pm2-$tree_user.service"
+  if systemctl is-enabled --quiet "$old_unit" 2>/dev/null || systemctl is-active --quiet "$old_unit" 2>/dev/null; then
+    fail "app $old_unit is enabled or active while the apps belong to $app_user — two pm2 daemons at boot. Fix: sudo systemctl disable --now $old_unit"
+  fi
+  gods="$(pgrep -f 'PM2 v[0-9.]+: God Daemon' 2>/dev/null || true)"
+  ngods="$(printf '%s\n' "$gods" | grep -c . || true)"
+  main="$(systemctl show -p MainPID --value "pm2-$app_user.service" 2>/dev/null || echo 0)"
+  if [ "$ngods" != "1" ]; then
+    fail "app $ngods pm2 God daemons are running — exactly one may, inside pm2-$app_user.service. A bare 'pm2' as another account starts one: use bash deploy/app-user.sh pm2 <args>"
+  else
+    gu="$(ps -o user:32= -p "$gods" 2>/dev/null | tr -d ' ')"
+    if [ "$gu" != "$app_user" ] || [ "$gods" != "$main" ]; then
+      fail "app the pm2 God daemon (pid $gods, user ${gu:-?}) is not pm2-$app_user.service's MainPID (${main:-0})"
+    fi
+  fi
+  if pgrep -u "$tree_user" -f 'next-server|apps/(brain-api|skills-host)/src/server.ts' >/dev/null 2>&1; then
+    fail "app an app process runs as $tree_user, not $app_user"
+  fi
+  dc="/usr/local/lib/aiwebsite/pm2-drift-check.cjs"
+  if [ ! -f "$dc" ]; then
+    fail "app $dc is not installed — bash deploy/app-user.sh ensure installs the root-owned copy"
+  elif systemctl is-active --quiet "pm2-$app_user.service"; then
+    drift="$(app_cli jlist 2>/dev/null | as_tree node "$dc" --live - 2>&1)" \
+      || fail "app pm2 drift (live): $(printf '%s\n' "$drift" | grep -E '^(DRIFT|pm2-drift-check)' | head -3 | tr '\n' ' ')— bash deploy/app-user.sh pm2 … repairs (deploy/RUNBOOK.md: App account)"
+    drift="$(priv cat "$app_home/.pm2/dump.pm2" 2>/dev/null | as_tree node "$dc" --dump - 2>&1)" \
+      || fail "app pm2 drift (saved dump): $(printf '%s\n' "$drift" | grep -E '^(DRIFT|pm2-drift-check)' | head -3 | tr '\n' ' ')"
+  fi
+  if [ -e "/var/lib/aiwebsite/pm2-drift-found" ]; then
+    fail "app a deploy found and repaired pm2 drift ($(head -c 300 "/var/lib/aiwebsite/pm2-drift-found" 2>/dev/null | tr -d '\n')) — find out who changed the app account's pm2 state, then: sudo rm /var/lib/aiwebsite/pm2-drift-found"
+  fi
+  if [ -n "$(priv find "$app_home/.pm2/modules" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]; then
+    fail "app a pm2 module is installed under $app_user ($app_home/.pm2/modules): code the daemon runs at every start, rewritable by the app — bash deploy/app-user.sh pm2 uninstall <name>"
+  fi
+  if priv test -e "/var/spool/cron/crontabs/$app_user"; then fail "app $app_user has a crontab (cron.deny lists it: someone with root wrote one)"; fi
+  for p in .ssh .npmrc .config/npm; do
+    if priv test -e "$app_home/$p"; then fail "app $app_home/$p exists — the app account must have none"; fi
+  done
+  if [ "$fails" -eq "$before" ]; then
+    ok "app the apps run as $app_user in pm2-$app_user.service only; the pm2 state matches the ecosystem; no module, crontab, ~/.ssh or ~/.npmrc foothold"
+  fi
+fi
+# <<< app-user-posture
 
 if [ "$fails" -gt 0 ]; then
   echo "posture-check: $fails FAIL line(s)"

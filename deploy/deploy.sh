@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@dacb3aafa9cc94cbb37d5501add1f023dbcff1d05961526bac7eb685da8f91f4
+# aicompany-template: deploy.sh.tpl@0f4771ff09b7c6097719cff88674a43e1d5442d508bc35464ec689cf7b6b82f7
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -328,7 +328,7 @@ case "$transport" in
     # box (TCP accepts, SSH banner hangs — the 2026-07-22 signature) fails
     # fast; everywhere else it is unset ⇒ `timeout 0` ⇒ no timeout.
     run_remote() { timeout "${REMOTE_TIMEOUT:-0}" $ssh_e "$ssh_user@$ssh_ip" "$@"; }
-    sync_dir()  { rsync -az --delete "${rsync_excludes[@]}" -e "$ssh_e" "$1" "$ssh_user@$ssh_ip:$2"; }
+    sync_dir()  { rsync -az --delete "${rsync_app_user[@]}" "${rsync_excludes[@]}" -e "$ssh_e" "$1" "$ssh_user@$ssh_ip:$2"; }
     push_file() { rsync -az -e "$ssh_e" "$1" "$ssh_user@$ssh_ip:$2"; }
     # Artifact ship (v1.78.0): dest is an absolute remote FILE path. Same rsync
     # channel as push_file — kept a separate primitive so the artifact never
@@ -398,6 +398,13 @@ esac
 
 # data/ holds the VM-generated knowledge docs (nightly crawl) and the config
 # snapshot; it exists only on the VM, so --delete must not remove it.
+# §9.10 (v1.175.0): on a host that renders APP_USER the app account is "other"
+# to every code file, so the sync never lands an other-writable one (a dev-box
+# 0666/0777 file would otherwise be writable by the app). Harmless before the
+# migrate; the tar transport has no equivalent, which is why render.mjs allows
+# APP_USER on ssh-key hosts only.
+rsync_app_user=()
+if [ -n 'aiwebsite' ]; then rsync_app_user=(--chmod=o-w); fi
 rsync_excludes=(
   --exclude .git --exclude node_modules --exclude .next
   # v1.84.0 SECRETS: `--exclude .env` is an EXACT-NAME match, so every

@@ -20,6 +20,12 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/aiwebsite}"
 APP_USER="${APP_USER:-$(stat -c '%U' "$APP_DIR")}"
+# Module v1.175.0 (§9.10): under the app account split setup-vm exports
+# AICOMPANY_APP_USER. The units below keep User=$APP_USER (the deploy user) in
+# their base text — the module's drop-in sets User= (deploy/app-user-units.txt),
+# so a rollback needs no redeploy — but the log files the jobs append to by
+# themselves belong to whoever runs them.
+LOG_OWNER="${AICOMPANY_APP_USER:-$APP_USER}"
 
 echo "post-install: governance + linkcheck + chase units (app dir $APP_DIR, user $APP_USER)"
 
@@ -29,7 +35,7 @@ echo "post-install: governance + linkcheck + chase units (app dir $APP_DIR, user
 # logrotate glob — no logrotate change needed.
 for f in /var/log/aiwebsite-governance.log /var/log/aiwebsite-governance-research.log; do
   sudo touch "$f"
-  sudo chown "$APP_USER" "$f"
+  sudo chown "$LOG_OWNER" "$f"
   sudo chmod 0644 "$f"
 done
 
@@ -247,7 +253,7 @@ WantedBy=timers.target
 UNIT
 
 sudo touch /var/log/aiwebsite-linkcheck.log
-sudo chown "$APP_USER":"$APP_USER" /var/log/aiwebsite-linkcheck.log 2>/dev/null || true
+sudo chown "$LOG_OWNER":"$LOG_OWNER" /var/log/aiwebsite-linkcheck.log 2>/dev/null || true
 
 # ── §5.21 chase register: two units, the weekday nudge and the weekly
 # report. They follow the governance/linkcheck pattern exactly, and each
@@ -451,7 +457,7 @@ UNIT
 
 for f in /var/log/aiwebsite-chase.log /var/log/aiwebsite-chase-report.log; do
   sudo touch "$f"
-  sudo chown "$APP_USER":"$APP_USER" "$f" 2>/dev/null || true
+  sudo chown "$LOG_OWNER":"$LOG_OWNER" "$f" 2>/dev/null || true
   sudo chmod 0644 "$f"
 done
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@9a9315d6cd0140a85ac922cf2e180aa973666fb9fe6e4e3657fecdd0ae7317cc
+# aicompany-template: setup-vm.sh.tpl@5e0bc543d4eafaf9879a9da62fcd9919467acd668fca9fc0651b3f16e6bbed56
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -44,6 +44,51 @@ fi
 if [ -n "" ]; then
   export PATH=":$PATH"
 fi
+
+# >>> app-user-active
+# §9.10 (v1.175.0): the app account split is ACTIVE only when the rendered name
+# is set AND the root-owned marker names it. This region is byte-identical in
+# every template that carries it (tests/app-user-split.test.ts pins that).
+app_user='aiwebsite'
+app_user_marker="/etc/aiwebsite/app-user"
+app_user_active() {
+  [ -n "$app_user" ] || return 1
+  [ -f "$app_user_marker" ] && [ ! -L "$app_user_marker" ] || return 1
+  [ "$(stat -c %u "$app_user_marker" 2>/dev/null)" = "0" ] || return 1
+  [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
+}
+# <<< app-user-active
+# >>> app-user-setup
+# With the split active (deploy/app-user.sh migrate ran) every `pm2` below goes
+# through this wrapper: the app account's daemon, started ONLY through its own
+# unit (a CLI call that finds no daemon would spawn one outside it), and a clean
+# CLI environment — `env -i` plus five names — because pm2 hands the apps the
+# environment of the CLI that starts them, and this ssh session's is not theirs.
+# deploy/pm2-drift-check.cjs knows exactly these five names.
+split=0
+unset AICOMPANY_APP_USER
+if app_user_active; then
+  split=1
+  # The host's post-install hook reads this for what IT owns (a log file a host
+  # job appends to by itself, …); the units' User= is the drop-ins' (ensure).
+  export AICOMPANY_APP_USER="$app_user"
+  app_home="/home/$app_user"
+  app_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  if [ -n "" ]; then app_path=":$app_path"; fi
+  app_pm2_bin="$(readlink -f "$(type -P pm2)")"
+  echo ">>> app account split ACTIVE (/etc/aiwebsite/app-user): the apps run as $app_user under pm2-$app_user.service"
+  as_app() {
+    sudo -n -u "$app_user" -H env -i HOME="$app_home" PATH="$app_path" LANG=C.UTF-8 \
+      NPM_CONFIG_USERCONFIG="/etc/aiwebsite/npmrc-empty" "$@"
+  }
+  pm2() {
+    if ! systemctl is-active --quiet "pm2-$app_user.service"; then
+      sudo -n systemctl start "pm2-$app_user.service" || { echo "ERROR: pm2-$app_user.service did not start" >&2; return 1; }
+    fi
+    as_app PM2_HOME="$app_home/.pm2" "$app_pm2_bin" "$@"
+  }
+fi
+# <<< app-user-setup
 
 # ── Deploy↔watchdog mutex marker (§9.5) ──────────────────────────
 # Touch a timestamped marker the watchdog checks before running any repair
@@ -444,6 +489,18 @@ exec 201>"$stage_dir/.lock"
 flock -n 201 || { echo "ERROR: a stage-build pipeline (watchdog rebuild?) holds the stage lock — aborting; live site untouched"; exit 1; }
 export STAGE_BUILD_LOCK_HELD=1
 
+# >>> app-user-brain-data
+# The brain's in-process registry refresh rewrites packages/brain/data/*.json
+# by .tmp + rename (its GoalScheduler, at boot and every 24 h), so that one
+# directory is app state. deploy.sh's rsync -a has just reset its group and
+# mode from the dev box; give it back to the app account's group.
+if [ "${split:-0}" = 1 ] && [ -d "$app_dir/packages/brain/data" ]; then
+  sudo -n chgrp -R -P "$app_user" "$app_dir/packages/brain/data"
+  sudo -n chmod 2775 "$app_dir/packages/brain/data"
+  sudo -n find "$app_dir/packages/brain/data" -maxdepth 1 -type f -exec chmod g+w {} +
+fi
+# <<< app-user-brain-data
+
 # Extra services: validate fail-fast, but KEEP RUNNING through install+build —
 # staged npm ci never touches live node_modules; ABI changes land only at the
 # cutover flip, so the stop/start bracket moves there (v1.13.0; supersedes the
@@ -688,6 +745,12 @@ if [ "$build_mode" = "local-artifact" ]; then
     echo "       Pre-cutover no-op; old build serving. Rebuild on the dev box under v${vm_node_major}.x."
     exit 1
   fi
+  # >>> app-user-stage-next-delete
+  # A deploy that died after the root chown below leaves app-account-owned
+  # files in the staged .next, which the deploy user cannot delete: root does,
+  # inside the 0750 stage the app account cannot reach (refuter 2S1).
+  if [ "${split:-0}" = 1 ]; then sudo -n rm -rf -- "$stage_dir/.next"; fi
+  # <<< app-user-stage-next-delete
   rm -rf "$stage_dir/.next"
   tar xzf "$artifact_tar" -C "$stage_dir" ./.next
   staged_build_id="$(cat "$stage_dir/.next/BUILD_ID" 2>/dev/null || echo missing)"
@@ -698,6 +761,19 @@ if [ "$build_mode" = "local-artifact" ]; then
   fi
   rm -f "$artifact_tar"
   echo "  artifact staged: BUILD_ID $staged_build_id under node v${vm_node_major}.x"
+  # >>> app-user-next-write-paths
+  # Next 16.4's runtime writes (file-system-cache.js getFilePath and the image
+  # optimizer's cacheDir): .next/cache (fetch + image caches), the ISR output of
+  # both routers, and the scoped route cache. Created if the artifact lacks them
+  # (Next would mkdir them in the deploy user's .next and fail), then handed to
+  # the app account by root, IN THE STAGE, before the cutover: fresh artifact
+  # files nobody else has touched. The rest of .next stays the deploy user's.
+  if [ "${split:-0}" = 1 ]; then
+    mkdir -p "$stage_dir/.next/cache" "$stage_dir/.next/server/app" "$stage_dir/.next/server/pages" "$stage_dir/.next/server/route-cache"
+    sudo -n chown -R -P "$app_user:$app_user" "$stage_dir/.next/cache" "$stage_dir/.next/server/app" \
+      "$stage_dir/.next/server/pages" "$stage_dir/.next/server/route-cache"
+  fi
+  # <<< app-user-next-write-paths
 else
   echo ">>> Building Next.js site (staged — live server keeps serving)..."
   # next build CLEARS distDir at build start — that is exactly why the build is
@@ -799,6 +875,12 @@ if [ -f "$env_next" ]; then
   # there is never an instant without a live .env, even under SIGKILL between
   # the two steps (a mv/mv pair had exactly that gap).
   cp -p "$app_dir/.env" "$app_dir/.env.prev"
+  # >>> app-user-env-mode
+  # The app account reads .env through its group (0640 deploy:app), and the
+  # rename keeps the incoming file's owner and mode — so set them first. Never
+  # a copy: the same inode becomes the live .env.
+  if [ "${split:-0}" = 1 ]; then sudo -n chgrp "$app_user" "$env_next"; chmod 0640 "$env_next"; fi
+  # <<< app-user-env-mode
   mv -f "$env_next" "$app_dir/.env"
   echo ">>> .env installed from .env.next (previous kept as .env.prev until the health gate passes)"
 fi
@@ -895,7 +977,11 @@ bash deploy/stage-build.sh purge-trash           # delete the parked N-1 set OUT
 
 # ── Config-derived artifacts (live tree now has new node_modules) ─
 echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
+if [ "${split:-0}" = 1 ]; then
+  as_app npx tsx "$module_dir/scripts/config-json.ts"   # data/ is the app's (§9.10)
+else
 npx tsx "$module_dir/scripts/config-json.ts"
+fi
 
 # ── pm2 resurrect-dump hygiene (v1.78.0, local-artifact hosts) ───
 # `pm2 save` snapshots EVERY running pm2 app into the resurrect dump — strays
@@ -930,7 +1016,41 @@ if [ "$build_mode" = "local-artifact" ]; then
     esac
   done
 fi
+# >>> app-user-drift-live
+# §9.10: the pm2 drift check BEFORE `pm2 save`, so a tampered env key or
+# node_args is never written into the dump `pm2 resurrect` replays at boot. On a
+# finding: the names are printed, the apps are re-created from the ecosystem,
+# the check runs again, and /var/lib/aiwebsite/pm2-drift-found keeps the posture
+# check (deploy.sh's gate, the hourly watchdog) failing until a human removes it.
+if [ "${split:-0}" = 1 ]; then
+  drift_rc=0
+  drift_out="$(pm2 jlist 200>&- 201>&- 2>/dev/null | node deploy/pm2-drift-check.cjs --live - 2>&1)" || drift_rc=$?
+  printf '%s\n' "$drift_out"
+  if [ "$drift_rc" -eq 2 ]; then
+    echo "ERROR: the pm2 drift check could not run (above) — NOT saving the dump. The new build is live; see deploy/RUNBOOK.md (App account)."
+    exit 1
+  fi
+  if [ "$drift_rc" -ne 0 ]; then
+    echo "!!! PM2 DRIFT (exit $drift_rc): the live pm2 state differs from the rendered ecosystem — someone talked to the app account's daemon. Re-creating the apps from deploy/ecosystem.config.cjs."
+    printf '%s %s\n' "$(date -u +%FT%TZ)" "$(printf '%s' "$drift_out" | grep '^DRIFT ' | tr '\n' ';' | cut -c1-900)" | sudo -n tee "/var/lib/aiwebsite/pm2-drift-found" >/dev/null || true
+    pm2 delete "aiwebsite" brain-api skills-host 200>&- 201>&- || true
+    pm2 startOrReload deploy/ecosystem.config.cjs --update-env 200>&- 201>&-
+    if ! pm2 jlist 200>&- 201>&- 2>/dev/null | node deploy/pm2-drift-check.cjs --live -; then
+      echo "ERROR: the pm2 state still drifts after re-creating the apps (a pm2 module?) — NOT saving the dump. The new build is live; see the DRIFT lines and deploy/RUNBOOK.md (App account)."
+      exit 1
+    fi
+  fi
+fi
+# <<< app-user-drift-live
 pm2 save 200>&- 201>&-
+# >>> app-user-drift-dump
+if [ "${split:-0}" = 1 ]; then
+  if ! sudo -n cat "$app_home/.pm2/dump.pm2" | node deploy/pm2-drift-check.cjs --dump -; then
+    echo "ERROR: the saved pm2 dump does not match the rendered ecosystem (names above). The new build is live; see deploy/RUNBOOK.md (App account)."
+    exit 1
+  fi
+fi
+# <<< app-user-drift-dump
 
 # ── pm2 boot-start (v1.174.0, §9.2) ──────────────────────────────
 # `pm2 startup` writes /etc/systemd/system/pm2-<user>.service and enables it,
@@ -956,6 +1076,12 @@ pm2 save 200>&- 201>&-
 # (deploy/RUNBOOK.md: Posture check).
 # >>> pm2-boot-arm
 pm2_boot_user="$(whoami)"
+if [ "${split:-0}" = 1 ]; then
+  # §9.10: pm2-<app user>.service is deploy/app-user.sh's unit (ensure, below);
+  # pm2's own `startup` must never write a second one.
+  pm2_boot_user="$app_user"
+  echo ">>> pm2 boot-start: pm2-$app_user.service is managed by deploy/app-user.sh (ensure)"
+else
 # Captured, then matched from a here-string: under pipefail, `check | grep -q`
 # takes the check's exit 1 (or a SIGPIPE) and would read a FAIL as "armed".
 pm2_boot_report="$(bash deploy/posture-check.sh --user "$pm2_boot_user" 2>/dev/null || true)"
@@ -972,12 +1098,18 @@ if grep -q '^FAIL boot ' <<< "$pm2_boot_report"; then
 else
   echo ">>> pm2 boot-start armed (pm2-$pm2_boot_user.service): left as it is"
 fi
+fi
 # <<< pm2-boot-arm
 
 # pm2-logrotate: 10M per file, retain 7 (§9.5 default-on log rotation)
+# §9.10: not under the app account — a pm2 module is code the daemon runs at
+# every start from ~/.pm2/modules, which that account can rewrite. Its logs are
+# rotated by logrotate instead (deploy/app-user.sh ensure).
+if [ "${split:-0}" = 0 ]; then
 pm2 install pm2-logrotate >/dev/null 2>&1 200>&- 201>&- || true
 pm2 set pm2-logrotate:max_size 10M >/dev/null 200>&- 201>&-
 pm2 set pm2-logrotate:retain 7 >/dev/null 200>&- 201>&-
+fi
 
 # ── Persona seed memories ────────────────────────────────────────
 # Public-scope brain memories that keep the persona identical across webchat,
@@ -1372,6 +1504,12 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
+# >>> app-user-ensure
+# §9.10: the app account's root-owned pieces — pm2-<app>.service, the drop-ins
+# that run the crawl/blog units (and the host's listed units) as that account,
+# the logrotate stanza, the empty npmrc, the root-owned drift-check copy.
+if [ "${split:-0}" = 1 ]; then bash deploy/app-user.sh ensure; fi
+# <<< app-user-ensure
 sudo systemctl daemon-reload
 sudo systemctl enable --now aiwebsite-knowledge.timer \
   aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer \
@@ -1467,8 +1605,13 @@ echo ">>> Running initial knowledge crawl (no email)..."
 # marker touched a few lines above (30-40 min per deploy). The marker stays up
 # until the last step on purpose (§9.5 holds the watchdog off). Timer units
 # never pass the flag.
+if [ "${split:-0}" = 1 ]; then
+  as_app node "$module_dir/scripts/refresh-knowledge.mjs" --config "$app_dir/data/aiwebsite-config.json" --no-email --deploy-self || \
+    echo "WARN: initial knowledge crawl failed — the persona uses the existing/starter knowledge doc until tonight's timer run"
+else
 node "$module_dir/scripts/refresh-knowledge.mjs" --config "$app_dir/data/aiwebsite-config.json" --no-email --deploy-self || \
   echo "WARN: initial knowledge crawl failed — the persona uses the existing/starter knowledge doc until tonight's timer run"
+fi
 
 # ── Cloudflare tunnel ────────────────────────────────────────────
 sudo bash "$app_dir/deploy/setup-cloudflared.sh"

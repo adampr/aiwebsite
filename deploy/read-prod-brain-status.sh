@@ -9,13 +9,16 @@ K=$(grep '^AIWEBSITE_SSH_KEY=' .env | cut -d= -f2)
 K="${K/#\~/$HOME}"
 ssh -i "$K" -o StrictHostKeyChecking=accept-new "$U@$IP" bash -s <<'REMOTE'
 set -u
+# Module v1.175.0 (§9.10): once the app account split is active a bare `pm2`
+# as xladmin would start a stray daemon; go through the app account.
+pm2x() { if bash /var/www/aiwebsite/deploy/app-user.sh status 2>/dev/null | grep -q '^app-user: ACTIVE'; then bash /var/www/aiwebsite/deploy/app-user.sh pm2 "$@"; else pm2 "$@"; fi; }
 echo "=== pm2 ==="
-pm2 ls || sudo -u xladmin pm2 ls || true
+pm2x ls || true
 echo "=== brain health (loopback) ==="
 curl -s -m 5 http://127.0.0.1:3211/health || echo UNREACHABLE
 echo
 echo "=== brain-api last log lines ==="
-pm2 logs brain-api --lines 25 --nostream 2>/dev/null | tail -30 || true
+pm2x logs brain-api --lines 25 --nostream 2>/dev/null | tail -30 || true
 echo "=== deploy marker / locks ==="
 ls -la /var/run/aiwebsite-deploy* 2>/dev/null || echo "no markers"
 echo "=== recent watchdog log ==="

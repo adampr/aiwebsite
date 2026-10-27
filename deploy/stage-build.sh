@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: stage-build.sh.tpl@bac375918c08c76e7ad891886858f147045ccae8fe71a706ac823d831b189d00
+# aicompany-template: stage-build.sh.tpl@e3e76d6acd6b396836891f91d29d04e1237a9c51b1e9bd121c03ace5f398de15
 set -euo pipefail
 # Staged-build engine (v1.13.0, §9.2): all mutation happens in the sibling
 # stage tree; the live tree changes only during a renames-only journaled flip.
@@ -9,6 +9,19 @@ trash="$stage/.trash"; state="$stage/.cutover-state"; lockfile="$stage/.lock"
 # Build placement (§9.2 v1.78.0): on local-artifact hosts the VM-side build is
 # REMOVED — build() below refuses structurally (see the 2026-08-08 outage).
 build_mode="local-artifact"
+# >>> app-user-active
+# §9.10 (v1.175.0): the app account split is ACTIVE only when the rendered name
+# is set AND the root-owned marker names it. This region is byte-identical in
+# every template that carries it (tests/app-user-split.test.ts pins that).
+app_user='aiwebsite'
+app_user_marker="/etc/aiwebsite/app-user"
+app_user_active() {
+  [ -n "$app_user" ] || return 1
+  [ -f "$app_user_marker" ] && [ ! -L "$app_user_marker" ] || return 1
+  [ "$(stat -c %u "$app_user_marker" 2>/dev/null)" = "0" ] || return 1
+  [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
+}
+# <<< app-user-active
 
 # Flip set = defaults (regenerated in stage) + host extras (deploy/swap-dirs.txt,
 # copied live->stage as INPUTS and hook-rebuilt there). .env is deliberately
@@ -126,6 +139,16 @@ heal() {
   purge_trash                        # heal is never inside a cutover bracket
 }
 purge_trash() { rm -rf "$trash"; }
+# >>> app-user-purge
+# §9.10 (v1.175.0, refuter B1): with the app account split active, a parked
+# generation holds app-account-owned .next write paths the deploy user cannot
+# delete. Root deletes it, and only from inside the stage, which is 0750 and
+# the deploy user's, so the app account cannot reach the tree root is deleting
+# (GNU rm -rf never follows a symbolic link; fs.protected_hardlinks=1).
+if app_user_active; then
+  purge_trash() { chmod 0750 "$stage"; sudo -n rm -rf -- "$trash"; }
+fi
+# <<< app-user-purge
 
 prepare() {
   # v1.15.0 pre-stage hygiene + floors (2026-07-22 outage, §9.2), all BEFORE
@@ -189,6 +212,9 @@ prepare() {
   rc=0; rsync -a --delete "${env_filter[@]}" "${excl[@]}" "$app/" "$stage/" || rc=$?
   { [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; } || exit "$rc"
   reap_stage_env_copies
+  # §9.10: `rsync -a "$app/" "$stage/"` has just given the stage root the live
+  # tree's mode (0775); under the split it must stay unreachable for the app account.
+  if app_user_active; then chmod 0750 "$stage"; fi
 }
 
 # v1.130.0: --delete never removes an EXCLUDED path (no --delete-excluded), so

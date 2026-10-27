@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@e0447b622b1b99fda5e225c32d240580dfa04636dcbf62075054b0e4e9b5dcfd
+# aicompany-template: watchdog.sh.tpl@6bc5fcfb03c97b4698d9364bce0cae4410de7b9ff3212ae8067c938db1c1fd6c
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -37,6 +37,19 @@ app_root="/var/www/aiwebsite"
 # is DISABLED (alert-only) — a VM-side build is the 2026-08-08 outage class,
 # and stage-build.sh build refuses on such hosts anyway.
 build_mode='local-artifact'
+# >>> app-user-active
+# §9.10 (v1.175.0): the app account split is ACTIVE only when the rendered name
+# is set AND the root-owned marker names it. This region is byte-identical in
+# every template that carries it (tests/app-user-split.test.ts pins that).
+app_user='aiwebsite'
+app_user_marker="/etc/aiwebsite/app-user"
+app_user_active() {
+  [ -n "$app_user" ] || return 1
+  [ -f "$app_user_marker" ] && [ ! -L "$app_user_marker" ] || return 1
+  [ "$(stat -c %u "$app_user_marker" 2>/dev/null)" = "0" ] || return 1
+  [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
+}
+# <<< app-user-active
 pid_file="/var/run/aiwebsite-watchdog.pid"
 lock_file="/var/run/aiwebsite-watchdog.lock"
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
@@ -404,6 +417,73 @@ run_as_pm2_user() {
   fi
 }
 
+# >>> app-user-watchdog
+# §9.10 (v1.175.0): two users. The TREE user (the owner of the app dir, the
+# deploy user) runs every stage-build.sh pipeline — heal and the remote-mode
+# rebuild rename and lock inside trees only it can write (refuter B2). The PM2
+# user runs pm2: the deploy user before the split, the app account while the
+# root-owned marker is active (re-read every pass, so a migrate or a rollback
+# takes effect without a watchdog restart). Under the split no pm2 CLI call may
+# start a daemon — that would put a second God daemon outside pm2-<app>.service
+# (refuter P1-S5): "daemon down" and "app missing" restart the UNIT instead.
+pm2_user_base="$pm2_user"
+tree_user="$(stat -c %U "$app_root" 2>/dev/null || echo root)"
+app_pm2_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+if [ -n "$toolchain_prefix" ]; then app_pm2_path="$toolchain_prefix:$app_pm2_path"; fi
+refresh_pm2_user() {
+  if app_user_active; then pm2_user="$app_user"; else pm2_user="$pm2_user_base"; fi
+}
+run_as_tree_user() {
+  if [[ "$(id -un)" == "$tree_user" ]]; then
+    bash -c "$1" 9>&-
+  else
+    runuser -u "$tree_user" -- bash -c "$1" 9>&-
+  fi
+}
+pm2_cli() { # "<pm2 args>" — never starts a daemon under the split
+  if app_user_active; then
+    if ! systemctl is-active --quiet "pm2-$app_user.service"; then
+      echo "pm2-$app_user.service is not active (not running 'pm2 $1')"
+      return 1
+    fi
+    runuser -u "$app_user" -- env -i HOME="/home/$app_user" PM2_HOME="/home/$app_user/.pm2" PATH="$app_pm2_path" \
+      LANG=C.UTF-8 NPM_CONFIG_USERCONFIG="/etc/aiwebsite/npmrc-empty" bash -c "pm2 $1" 9>&-
+  else
+    run_as_pm2_user "pm2 $1"
+  fi
+}
+pm2_app_restart() { # <app>… — the repair command restart_and_alert evaluates
+  if app_user_active; then
+    local a
+    if ! systemctl is-active --quiet "pm2-$app_user.service"; then
+      log "ACTION: pm2-$app_user.service is not active — restarting the unit (its resurrect brings back every saved app)"
+      systemctl restart "pm2-$app_user.service" 9>&-
+      return $?
+    fi
+    for a in "$@"; do
+      if ! pm2_cli "jlist" 2>/dev/null | jq -e --arg n "$a" '.[] | select(.name == $n)' >/dev/null 2>&1; then
+        log "ACTION: $a is not in the pm2 list — restarting pm2-$app_user.service (resurrect from the saved dump)"
+        systemctl restart "pm2-$app_user.service" 9>&-
+        return $?
+      fi
+    done
+    pm2_cli "restart $*"
+  else
+    run_as_pm2_user "pm2 restart $*"
+  fi
+}
+# Seed-on-first-sight of a deploy-side stamp in data/. Under the split data/ is
+# writable by the app account, so root must never write a name there itself (a
+# planted link would turn root's write and chown into the app account's): the
+# file's owner writes it, with noclobber. The real guard is migrate: it
+# pre-creates these stamps deploy-owned in the STICKY data/, so the app account
+# can neither remove them nor plant a link under their names, and this seed
+# then never runs (refuter N4: noclobber alone would follow a dangling link).
+seed_stamp() { # <path> — as the tree user, noclobber
+  runuser -u "$tree_user" -- bash -c 'set -C; date +%s > "$1"' _ "$1" 2>/dev/null 9>&-
+}
+# <<< app-user-watchdog
+
 # ── Page-render checks ────────────────────────────────────────────
 
 attempt_clean_rebuild() {
@@ -416,7 +496,7 @@ attempt_clean_rebuild() {
   # never consumed (cutover-repair flips .next only). One shell invocation so
   # the fd-201 flock spans the WHOLE pipeline; a concurrent deploy makes
   # flock -n fail -> rc 3 = benign skip, never interleave.
-  run_as_pm2_user "cd '$app_root' && mkdir -p '$app_root.stage' && exec 201>'$app_root.stage/.lock' && { flock -n 201 || exit 3; } \
+  run_as_tree_user "cd '$app_root' && mkdir -p '$app_root.stage' && exec 201>'$app_root.stage/.lock' && { flock -n 201 || exit 3; } \
     && export STAGE_BUILD_LOCK_HELD=1 \
     && bash deploy/stage-build.sh prepare \
     && bash deploy/stage-build.sh refresh-modules \
@@ -427,7 +507,7 @@ attempt_clean_rebuild() {
   local rc=$?
   if [[ $rc -eq 0 ]]; then
     log "ACTION: staged repair flip done (deploy .old rollback set untouched), restarting PM2 ..."
-    run_as_pm2_user "pm2 restart aiwebsite" >> "$log_file" 2>&1
+    pm2_app_restart "aiwebsite" >> "$log_file" 2>&1
     sleep 3
     return 0
   elif [[ $rc -eq 3 ]]; then
@@ -458,8 +538,8 @@ check_cutover_journal() {
     return 0
   fi
   log "ACTION: cutover journal present with no live deploy — HEAL-ONLY recovery (stage-build.sh heal: renames only, zero build)"
-  if run_as_pm2_user "cd '$app_root' && bash deploy/stage-build.sh heal" >> "$log_file" 2>&1; then
-    run_as_pm2_user "pm2 restart aiwebsite brain-api skills-host" >> "$log_file" 2>&1 || true
+  if run_as_tree_user "cd '$app_root' && bash deploy/stage-build.sh heal" >> "$log_file" 2>&1; then
+    pm2_app_restart "aiwebsite" brain-api skills-host >> "$log_file" 2>&1 || true
     send_email \
       "WARN Healed an interrupted cutover (renames rolled back; no build)" \
       "A cutover journal was found at $journal with no deploy in progress — a flip died mid-rename (likely connection death inside the cutover bracket).\nstage-build.sh heal rolled the flip fully BACKWARD (renames only; this host never builds) and pm2 was restarted.\nThe PREVIOUS generation is serving. Re-run the deploy from the dev box through this host's deploy wrapper, the entrypoint named in the host repo's CLAUDE.md — never bare deploy/deploy.sh (the wrappers carry the dirty-tree gate and, where the host needs it, the 2FA window). The wrapper takes over the interrupted deploy itself or forwards --takeover; check its usage line." \
@@ -727,7 +807,9 @@ file_age_alert() { # path, label, severity, issue_key, remedy [, threshold_secon
 check_synth_heartbeat() {
   [ "$synth_heartbeat_enabled" = "1" ] || return 0
   if [ ! -f "$app_root/data/synth-last-sweep" ]; then
-    if date +%s > "$app_root/data/synth-last-sweep" 2>/dev/null; then
+    if app_user_active; then
+      seed_stamp "$app_root/data/synth-last-sweep" && log "INFO: seeded synth sweep heartbeat (as $tree_user)"
+    elif date +%s > "$app_root/data/synth-last-sweep" 2>/dev/null; then
       chown "$pm2_user" "$app_root/data/synth-last-sweep" 2>/dev/null || true
       log "INFO: seeded synth sweep heartbeat"
     fi
@@ -831,7 +913,9 @@ check_freshness() {
   # means the timer/unit itself is dead. Seed-on-first-sight so a fresh
   # v1.20.0 render never fires "missing" before the first 05:10 UTC fire.
   if [ ! -f "$app_root/data/hi-speed-last-run" ]; then
-    if date +%s > "$app_root/data/hi-speed-last-run" 2>/dev/null; then
+    if app_user_active; then
+      seed_stamp "$app_root/data/hi-speed-last-run" && log "INFO: seeded hi-speed heartbeat (as $tree_user)"
+    elif date +%s > "$app_root/data/hi-speed-last-run" 2>/dev/null; then
       chown "$pm2_user" "$app_root/data/hi-speed-last-run" 2>/dev/null || true
       log "INFO: seeded hi-speed heartbeat"
     fi
@@ -934,7 +1018,8 @@ fi
 # flock). Written AFTER the lock so the file always names the live holder.
 echo $$ > "$pid_file"
 load_resend_key
-log "INFO: Watchdog started (PID $$, pm2_user=$pm2_user)"
+refresh_pm2_user
+log "INFO: Watchdog started (PID $$, pm2_user=$pm2_user, tree_user=$tree_user$(app_user_active && echo ", app account split ACTIVE"))"
 
 # ── Extra services (v1.4.0, §9.5): host-declared non-pm2 services ─
 # Supervision runs INSIDE this singleton loop — no second daemon, no new
@@ -1046,6 +1131,7 @@ while true; do
 
   standard_pass=$(( standard_pass + 1 ))
   any_failure=false
+  refresh_pm2_user   # §9.10: the split's marker is re-read every standard pass
 
   # 0. Interrupted-cutover heal (M2c) — BEFORE the service checks: restarting
   # pm2 against a half-flipped tree just crash-loops; heal first, then the
@@ -1083,7 +1169,7 @@ while true; do
     log "FAIL: brain-api health check failed: $brain_response"
     any_failure=true
     restart_and_alert "$svc_brain" \
-      "run_as_pm2_user 'pm2 restart brain-api'" \
+      "pm2_app_restart brain-api" \
       "Health URL: $brain_health_url\nResponse: ${brain_response:-<empty>}" \
       "true"
   else
@@ -1096,7 +1182,7 @@ while true; do
     log "FAIL: skills-host health check failed: $skills_response"
     any_failure=true
     restart_and_alert "$svc_skills" \
-      "run_as_pm2_user 'pm2 restart skills-host'" \
+      "pm2_app_restart skills-host" \
       "Health URL: $skills_health_url\nResponse: ${skills_response:-<empty>}" \
       "true"
   else
@@ -1110,9 +1196,9 @@ while true; do
     log "FAIL: site health check failed: $site_response"
     any_failure=true
 
-    pm2_status=$(run_as_pm2_user "pm2 jlist" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
+    pm2_status=$(pm2_cli "jlist" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
     restart_and_alert "$svc_site" \
-      "run_as_pm2_user 'pm2 restart aiwebsite'" \
+      "pm2_app_restart aiwebsite" \
       "Health URL: $site_health_url\nResponse: ${site_response:-<empty>}\nPM2 status: $pm2_status" \
       "true"
   else
@@ -1198,7 +1284,7 @@ while true; do
     any_failure=true
     send_email \
       "$kill_sev earlyoom killed a process (memory pressure)" \
-      "earlyoom kill events since the last watchdog pass (victim named per line):\n$earlyoom_kills\n\nThreshold evidence from earlyoom (verbatim, may be empty):\n$earlyoom_evidence\n\nConfigured thresholds: SIGTERM at MemAvail<=15% AND SwapFree<=30%; SIGKILL at 8%/15%. A killed npm/node build step means a deploy aborted safely pre-cutover; a killed app SHOULD have been restarted by pm2/this watchdog — verify below. The PRESSURE is the story: check free -m, /var/log/aiwebsite-psi.log and sar -r before the next deploy.\n\npm2 status now:\n$(run_as_pm2_user pm2 ls 2>/dev/null | head -12)" \
+      "earlyoom kill events since the last watchdog pass (victim named per line):\n$earlyoom_kills\n\nThreshold evidence from earlyoom (verbatim, may be empty):\n$earlyoom_evidence\n\nConfigured thresholds: SIGTERM at MemAvail<=15% AND SwapFree<=30%; SIGKILL at 8%/15%. A killed npm/node build step means a deploy aborted safely pre-cutover; a killed app SHOULD have been restarted by pm2/this watchdog — verify below. The PRESSURE is the story: check free -m, /var/log/aiwebsite-psi.log and sar -r before the next deploy.\n\npm2 status now:\n$(pm2_cli ls 2>/dev/null | head -12)" \
       "earlyoom-kill"
   fi
   # Stamp written AFTER the mail path so a crash between scan and send never

@@ -1,0 +1,9 @@
+# Host-owned app-code units that run as the app account once the split is
+# active (module §9.10, v1.175.0): deploy/app-user.sh ensure drops
+# 60-aicompany-app-user.conf (User=/Group=aiwebsite, NoNewPrivileges, the empty
+# npmrc) into each; the base unit text in deploy/post-install.sh is unchanged.
+# The *-alert.service units are root OnFailure notifiers and stay root.
+aiwebsite-chase.service
+aiwebsite-chase-report.service
+aiwebsite-governance.service
+aiwebsite-linkcheck.service

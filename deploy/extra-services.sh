@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: extra-services.sh.tpl@86ed8b060cfd3df31ed194676dc0fa6e14997819c50fc63a42a63ce5a25f1655
+# aicompany-template: extra-services.sh.tpl@d5c5475cd87b5eeac2c6a9d21f628be61fc81a3c4cebfeb4809e711b9197ce34
 # Extra-services supervision library + CLI for ai.xl.net (§9.5 "Extra
 # services", v1.4.0). Supervises host-declared non-pm2 services (e.g. a legacy
 # voice service) from INSIDE the module watchdog's singleton loop — no second
@@ -45,6 +45,24 @@ es_slug="aiwebsite"
 # the committed manifest next to this script.
 es_manifest_file="${ES_MANIFEST:-$es_app_root/deploy/extra-services.json}"
 es_state_dir="/var/run"
+# >>> app-user-active
+# §9.10 (v1.175.0): the app account split is ACTIVE only when the rendered name
+# is set AND the root-owned marker names it. This region is byte-identical in
+# every template that carries it (tests/app-user-split.test.ts pins that).
+app_user='aiwebsite'
+app_user_marker="/etc/aiwebsite/app-user"
+app_user_active() {
+  [ -n "$app_user" ] || return 1
+  [ -f "$app_user_marker" ] && [ ! -L "$app_user_marker" ] || return 1
+  [ "$(stat -c %u "$app_user_marker" 2>/dev/null)" = "0" ] || return 1
+  [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
+}
+# <<< app-user-active
+# §9.10: a service without an explicit "user" runs as the app account while
+# the split is active, else (as before) as the owner of its cwd.
+es_default_user() { # <cwd>
+  if app_user_active; then printf '%s' "$app_user"; else stat -c %U "$1" 2>/dev/null || echo root; fi
+}
 
 # Parallel arrays filled by es_load (bash 3 compatible — no assoc arrays).
 es_names=(); es_cwds=(); es_starts=(); es_paths=(); es_users=()
@@ -276,7 +294,7 @@ es_stop_one() { # index
 es_start_one() { # index
   local i="$1" name="${es_names[$1]}"
   local user="${es_users[$i]}"
-  [ -n "$user" ] || user=$(stat -c %U "${es_cwds[$i]}" 2>/dev/null || echo root)
+  [ -n "$user" ] || user=$(es_default_user "${es_cwds[$i]}")
   # Idempotency: already healthy on its port ⇒ no-op (never double-start);
   # port held but UNhealthy ⇒ stop the wreck first, then launch fresh.
   if [ -n "$(lsof -ti :"${es_ports[$i]}" 2>/dev/null || true)" ]; then
