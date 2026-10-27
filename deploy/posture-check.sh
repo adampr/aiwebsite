@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: posture-check.sh.tpl@4ede9549d833f7b3ddeda013921a7e3ce236bf4856365af091215ab8aa254045
+# aicompany-template: posture-check.sh.tpl@5341b61600782ef82bf4a93fc3a6ea1a94ce39404fb8fbc5996ab54abedd53db
 # aiwebsite posture check (v1.174.0, architecture.md §9.1 / §9.5). READ-ONLY: it
 # changes nothing on the box and prints no secret.
 #
@@ -20,7 +20,9 @@
 #   3. app account (v1.175.0, §9.10) — only while the app account split is
 #      active (APP_USER rendered AND /etc/aiwebsite/app-user names it): one pm2
 #      daemon, the unit's, running as the app account; the deploy user's old
-#      unit off; no app process as the deploy user; the pm2 drift check clean
+#      unit off; no app process as the deploy user (a shell or grep whose
+#      command line names the pattern is not one, v1.175.2); the module ports
+#      held by the app account (an owner it cannot read is INFO, v1.175.2); the pm2 drift check clean
 #      (live and dump) and no unacknowledged repaired drift; no pm2 module,
 #      crontab, ~/.ssh or ~/.npmrc under the app account. --user defaults to the
 #      app account then.
@@ -51,6 +53,29 @@ app_user_active() {
   [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
 }
 # <<< app-user-active
+# >>> app-user-procs
+# §9.10 (v1.175.2): app_pids <pgrep args…> prints the pids pgrep finds that are
+# APP processes. `pgrep -f` matches the whole command line, so it also finds
+# every observer whose argv merely names the pattern: an ssh `bash -c '… | grep
+# next-server'`, that grep, a watch, a sudo (roleplay, 2026-10-26: verify and
+# posture FAILed on the operator's own ssh command). A pid counts only when its
+# process name (comm) is node's or the title an app process gives itself:
+# `next-server (v…` (Next), `PM2 v…` (the God daemon), `node <exec path>` (pm2's
+# fork container); the tsx child that runs brain-api/skills-host keeps `node`. A
+# shell, grep, ssh or sudo keeps its own program name whatever its argv says.
+# comm, not /proc/<pid>/exe: comm is readable for every process by every account
+# (posture runs as root and as the deploy user; the God check reads the app
+# account's daemon as the deploy user, where exe is EACCES), and a pid that exits
+# between pgrep and the read prints nothing and is dropped. This region is
+# byte-identical in app-user.sh and posture-check.sh (a test pins that).
+app_pids() {
+  local p c
+  for p in $(pgrep "$@" 2>/dev/null || true); do
+    c="$(ps -o comm= -p "$p" 2>/dev/null || true)"
+    case "$c" in node*|next-server*|'PM2 v'*) printf '%s\n' "$p" ;; esac
+  done
+}
+# <<< app-user-procs
 
 user=""
 while [ $# -gt 0 ]; do
@@ -188,7 +213,9 @@ if app_user_active; then
   if systemctl is-enabled --quiet "$old_unit" 2>/dev/null || systemctl is-active --quiet "$old_unit" 2>/dev/null; then
     fail "app $old_unit is enabled or active while the apps belong to $app_user — two pm2 daemons at boot. Fix: sudo systemctl disable --now $old_unit"
   fi
-  gods="$(pgrep -f 'PM2 v[0-9.]+: God Daemon' 2>/dev/null || true)"
+  # every pattern match goes through app_pids: an observer naming the pattern is
+  # not an app process (v1.175.2)
+  gods="$(app_pids -f 'PM2 v[0-9.]+: God Daemon')"
   ngods="$(printf '%s\n' "$gods" | grep -c . || true)"
   main="$(systemctl show -p MainPID --value "pm2-$app_user.service" 2>/dev/null || echo 0)"
   if [ "$ngods" != "1" ]; then
@@ -199,8 +226,35 @@ if app_user_active; then
       fail "app the pm2 God daemon (pid $gods, user ${gu:-?}) is not pm2-$app_user.service's MainPID (${main:-0})"
     fi
   fi
-  if pgrep -u "$tree_user" -f 'next-server|apps/(brain-api|skills-host)/src/server.ts' >/dev/null 2>&1; then
-    fail "app an app process runs as $tree_user, not $app_user"
+  left="$(app_pids -u "$tree_user" -f 'next-server|apps/(brain-api|skills-host)/src/server.ts' | tr '\n' ' ')"
+  if [ -n "$left" ]; then
+    fail "app an app process runs as $tree_user, not $app_user (pids $left)"
+  fi
+  # The three module ports are held by the app account (v1.175.2, a backstop
+  # independent of the name rules). ss names another account's socket owner only
+  # to root: the watchdog's run (root) reads it directly, setup-vm's run (the
+  # deploy user) through sudo -n, like every other priv read here. An owner that
+  # cannot be read is an INFO "could not check" line: never a silent pass, never
+  # a FAIL of a healthy box. A port nothing listens on is section 1's INFO.
+  if owners="$(priv ss -ltnpH 2>/dev/null)"; then
+    for port in $module_ports; do
+      lines="$(printf '%s\n' "$owners" | awk -v p=":$port" 'length($4) > length(p) && substr($4, length($4) - length(p) + 1) == p')"
+      [ -n "$lines" ] || continue
+      pids="$(printf '%s\n' "$lines" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u | tr '\n' ' ')"
+      if [ -z "$pids" ]; then info "app could not check who holds :$port (ss -ltnp printed no process)"; continue; fi
+      # a pid that has exited by this read (ps exits 1) is skipped; one that exists
+      # but reads no user is a FAIL
+      seen=""
+      for p in $pids; do
+        if pu="$(ps -o user:32= -p "$p" 2>/dev/null)"; then
+          pu="$(printf '%s' "$pu" | tr -d ' ')"; seen=1
+          [ "$pu" = "$app_user" ] || fail "app :$port is held by pid $p (${pu:-no user}), not $app_user"
+        fi
+      done
+      [ -n "$seen" ] || info "app could not check who holds :$port (its pids ${pids% } exited before the owner read)"
+    done
+  else
+    info "app could not check who holds the module ports (ss -ltnp failed: not root and no sudo -n?)"
   fi
   dc="/usr/local/lib/aiwebsite/pm2-drift-check.cjs"
   if [ ! -f "$dc" ]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: app-user.sh.tpl@3641bc1a9a037a4cf3eeff48a2559be3da419747682b8b2f37a18661e28b228c
+# aicompany-template: app-user.sh.tpl@b3d0edf8d47ac5d10479eff510d2b3cb868b10782b128a0388510d8fcaf95318
 # aiwebsite app account handoff (v1.175.0, architecture.md §9.10; S12 P1, owner
 # ruling 2026-10-25 "Go, both sites"). Moves the site, brain-api, skills-host and
 # the extra services off the deploy user (passwordless sudo) onto their own
@@ -47,6 +47,29 @@ app_user_active() {
   [ "$(head -n 1 "$app_user_marker" 2>/dev/null)" = "$app_user" ]
 }
 # <<< app-user-active
+# >>> app-user-procs
+# §9.10 (v1.175.2): app_pids <pgrep args…> prints the pids pgrep finds that are
+# APP processes. `pgrep -f` matches the whole command line, so it also finds
+# every observer whose argv merely names the pattern: an ssh `bash -c '… | grep
+# next-server'`, that grep, a watch, a sudo (roleplay, 2026-10-26: verify and
+# posture FAILed on the operator's own ssh command). A pid counts only when its
+# process name (comm) is node's or the title an app process gives itself:
+# `next-server (v…` (Next), `PM2 v…` (the God daemon), `node <exec path>` (pm2's
+# fork container); the tsx child that runs brain-api/skills-host keeps `node`. A
+# shell, grep, ssh or sudo keeps its own program name whatever its argv says.
+# comm, not /proc/<pid>/exe: comm is readable for every process by every account
+# (posture runs as root and as the deploy user; the God check reads the app
+# account's daemon as the deploy user, where exe is EACCES), and a pid that exits
+# between pgrep and the read prints nothing and is dropped. This region is
+# byte-identical in app-user.sh and posture-check.sh (a test pins that).
+app_pids() {
+  local p c
+  for p in $(pgrep "$@" 2>/dev/null || true); do
+    c="$(ps -o comm= -p "$p" 2>/dev/null || true)"
+    case "$c" in node*|next-server*|'PM2 v'*) printf '%s\n' "$p" ;; esac
+  done
+}
+# <<< app-user-procs
 app_home="/home/$app_user"
 journal="/var/lib/aiwebsite/app-user.journal"
 npmrc_empty="/etc/aiwebsite/npmrc-empty"
@@ -190,7 +213,9 @@ logrotate_text() {
 # The app account's pm2 logs. No pm2-logrotate module under that account: a pm2
 # module is code the daemon runs at every start from a directory the app owns.
 # su: logrotate acts in the app's own directory with the app's own rights.
-$app_home/.pm2/logs/*.log {
+# pm2.log (the God daemon's own log, v1.175.2) shares the stanza, so it gets
+# exactly the options of the apps' logs; copytruncate keeps the daemon's fd.
+$app_home/.pm2/logs/*.log $app_home/.pm2/pm2.log {
     su $app_user $app_user
     daily
     maxsize 10M
@@ -308,7 +333,7 @@ do_preflight() {
     grep -qxF "app_user='$app_user'" "$f" 2>/dev/null && ok "$f is the APP_USER render" || fail "$f is not the APP_USER render (the host deploy installs it)"
   done
   sudo -n sshd -t 2>/dev/null && ok "sshd -t passes now" || fail "sshd -t fails BEFORE any change — fix sshd first"
-  gods="$(pgrep -f 'PM2 v[0-9.]+: God Daemon' | wc -l || true)"
+  gods="$(app_pids -f 'PM2 v[0-9.]+: God Daemon' | grep -c . || true)"
   [ "$gods" -le 1 ] && ok "pm2 God daemons: $gods" || fail "$gods pm2 God daemons are running — exactly one may"
   if app_user_active; then
     info "the split is ACTIVE ($app_user_marker names $app_user): migrate resumes or no-ops"
@@ -357,21 +382,24 @@ do_migrate() {
   fi
 
   # 2. stop every app process (extra services, then the deploy user's daemon)
-  local old_unit="pm2-$deploy_user.service" i
+  local old_unit="pm2-$deploy_user.service" i left
   if ! j_has "step stop done"; then
     say "2/7 stopping the extra services and the pm2 daemon of $deploy_user (the site is DOWN from here)"
     i="$(systemctl is-enabled "$old_unit" 2>/dev/null)" || true
     j_pre_once old-unit-enabled "${i:-absent}"
+    # The deploy marker stays until "migrate complete". A deploy started within 30 min of
+    # its last touch stops with DEPLOY-BUSY; after a migrate that died (e.g. a step-6 drift
+    # stop), if the marker is that migrate's own, the fix is deployed with --takeover.
     sudo -n touch "$deploy_marker"
     if [ -f "$app_dir/deploy/extra-services.json" ]; then sudo -n bash "$app_dir/deploy/extra-services.sh" stop 200>&-; fi
     if systemctl is-active --quiet "$old_unit"; then sudo -n systemctl stop "$old_unit"; fi
-    if pgrep -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon' >/dev/null; then pm2 kill 200>&- >/dev/null 2>&1 || true; fi
+    if [ -n "$(app_pids -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon')" ]; then pm2 kill 200>&- >/dev/null 2>&1 || true; fi
     for i in $(seq 1 30); do
-      pgrep -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon|next-server|apps/(brain-api|skills-host)/src/server.ts' >/dev/null || break
+      [ -n "$(app_pids -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon|next-server|apps/(brain-api|skills-host)/src/server.ts')" ] || break
       sleep 1
     done
-    pgrep -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon|next-server|apps/(brain-api|skills-host)/src/server.ts' >/dev/null \
-      && die "app processes of $deploy_user are still running after 30 s — nothing was re-owned; inspect, then re-run migrate (or rollback)"
+    left="$(app_pids -u "$deploy_user" -f 'PM2 v[0-9.]+: God Daemon|next-server|apps/(brain-api|skills-host)/src/server.ts' | tr '\n' ' ')"
+    [ -z "$left" ] || die "app processes of $deploy_user are still running after 30 s (pids $left) — nothing was re-owned; inspect, then re-run migrate (or rollback)"
     j_add "step stop done"
   fi
 
@@ -468,11 +496,16 @@ do_migrate() {
     wait_http "$site_health" 120 '"status":"ok"' || die "site health did not come back within 120 s — re-run migrate (it resumes here) or run rollback; do NOT reboot first"
     wait_http "$brain_health" 60 "" || die "brain-api health did not come back within 60 s — re-run migrate (it resumes here) or run rollback; do NOT reboot first"
     wait_http "$skills_health" 60 "" || die "skills-host health did not come back within 60 s — re-run migrate (it resumes here) or run rollback; do NOT reboot first"
+    # A drift stop here is read first, then resumed or rolled back (deploy/RUNBOOK.md
+    # "migrate died part-way"; MIGRATIONS v1.175.1): a name pm2 itself sets that the
+    # check did not know (v1.175.1's PWD) is fixed by a module bump, after which
+    # migrate resumes at this step; a name or value the ecosystem does not explain
+    # is real drift, and rollback is the answer.
     app_pm2 jlist 2>/dev/null | node "$app_dir/deploy/pm2-drift-check.cjs" --live - \
-      || die "the pm2 drift check failed on a FRESH start (names above) — run rollback and read the check"
+      || die "the pm2 drift check failed on a FRESH start (names above). Read the check first: if a module bump fixes its cause, deploy the bump and re-run migrate (it resumes at step 6) — this migrate's deploy marker stays fresh for 30 min, so a deploy before then stops with DEPLOY-BUSY; if that marker is your own migrate's (no other deploy is running), deploy the bump with --takeover; if the drift is real, run rollback. Do NOT reboot first"
     app_pm2 save 200>&- >/dev/null
     sudo -n cat "$app_home/.pm2/dump.pm2" | node "$app_dir/deploy/pm2-drift-check.cjs" --dump - \
-      || die "the saved dump does not match the rendered ecosystem (names above) — run rollback"
+      || die "the saved dump does not match the rendered ecosystem (names above). Read the check first: if a module bump fixes its cause, deploy the bump and re-run migrate (it resumes at step 6) — this migrate's deploy marker stays fresh for 30 min, so a deploy before then stops with DEPLOY-BUSY; if that marker is your own migrate's (no other deploy is running), deploy the bump with --takeover; if the drift is real, run rollback. Do NOT reboot first"
     j_add "step start done"
   fi
 
@@ -492,9 +525,138 @@ do_migrate() {
 
 # ══ verify (read-only) ══════════════════════════════════════════════════════
 as_app_test() { sudo -n -u "$app_user" test "$@" 2>/dev/null; }
+# processes: every pattern match goes through app_pids (an observer naming the
+# pattern is not an app process, v1.175.2)
+verify_processes() {
+  local gods n god main p left
+  gods="$(app_pids -f 'PM2 v[0-9.]+: God Daemon')"
+  n="$(printf '%s\n' "$gods" | grep -c . || true)"
+  god="$(printf '%s\n' "$gods" | head -1)"
+  main="$(systemctl show -p MainPID --value "$pm2_unit" 2>/dev/null || echo 0)"
+  [ "$n" = "1" ] && [ "$god" = "$main" ] && [ "$(ps -o user:32= -p "$god" | tr -d ' ')" = "$app_user" ] \
+    && ok "one pm2 God daemon (pid $god) = $pm2_unit MainPID, user $app_user" || fail "pm2 God daemons: $n, first pid ${god:-none}, unit MainPID $main"
+  left="$(app_pids -u "$deploy_user" -f 'next-server|apps/(brain-api|skills-host)/src/server.ts|PM2 v' | tr '\n' ' ')"
+  [ -n "$left" ] && fail "an app process still runs as $deploy_user (pids $left)" || ok "no app process runs as $deploy_user"
+  for p in next-server 'apps/brain-api/src/server.ts' 'apps/skills-host/src/server.ts'; do
+    [ -n "$(app_pids -u "$app_user" -f "$p")" ] && ok "$p runs as $app_user" || fail "$p is not running as $app_user"
+  done
+}
+# listeners (v1.175.2, a backstop independent of every name rule above): each of
+# the three module ports is held by a process of the app account. ss names
+# another account's socket owner only to root, so it runs through sudo; a port
+# whose owner cannot be read is a FAIL, never an OK. A port nothing listens on is
+# read again like the health checks (2 more reads, 5 s apart, about 10 s: a port
+# mid-restart). A pid ss names that has exited by the owner read (ps exits 1 for
+# a pid that no longer exists) is skipped; one that exists but reads no user is a
+# FAIL; a port none of whose pids could be read is a FAIL.
+ss_port_lines() { printf '%s\n' "$1" | awk -v p=":$2" 'length($4) > length(p) && substr($4, length($4) - length(p) + 1) == p'; }
+verify_listeners() {
+  local out port lines pids p u bad seen try
+  if ! out="$(sudo -n ss -ltnpH 2>/dev/null)"; then
+    fail "listeners: could not run ss -ltnp through sudo — who owns :3000 :3211 :3213 is unchecked"; return 0
+  fi
+  for port in 3000 3211 3213; do
+    lines="$(ss_port_lines "$out" "$port")"
+    for try in 2 3; do
+      [ -z "$lines" ] || break
+      sleep 5
+      if ! out="$(sudo -n ss -ltnpH 2>/dev/null)"; then
+        fail "listeners: could not run ss -ltnp through sudo — who owns :3000 :3211 :3213 is unchecked"; return 0
+      fi
+      lines="$(ss_port_lines "$out" "$port")"
+    done
+    if [ -z "$lines" ]; then fail "listeners :$port — nothing listens (read 3 times over about 10 s)"; continue; fi
+    pids="$(printf '%s\n' "$lines" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u | tr '\n' ' ' || true)"
+    if [ -z "$pids" ]; then fail "listeners :$port — could not read its owner (ss printed no process)"; continue; fi
+    bad=""; seen=""
+    for p in $pids; do
+      if u="$(ps -o user:32= -p "$p" 2>/dev/null)"; then
+        u="$(printf '%s' "$u" | tr -d ' ')"; seen="$seen $p"
+        [ "$u" = "$app_user" ] || bad="$bad pid $p (${u:-no user})"
+      fi
+    done
+    if [ -n "$bad" ]; then fail "listeners :$port is held by another account:$bad — not $app_user"
+    elif [ -z "$seen" ]; then fail "listeners :$port — its holders (pids $pids) exited before their owner could be read; re-run verify"
+    else ok "listeners :$port held by $app_user (pids$seen)"; fi
+  done
+}
+# Permission errors. An app account's EACCES/EPERM/EROFS lands in its pm2 logs,
+# in the pm2 daemon's own log (pm2.log), in a host log a host job appends to
+# (/var/log/*.log), or in the journal of the units that run as the app account,
+# where systemd also writes its own words ("Failed to execute …: Permission
+# denied", "status=203/EXEC", "Read-only file system") and never the codes.
+# It never lands in /var/log/auth.log: that file holds sudo and sshd records,
+# including the COMMAND= line sudo writes for this very scan before grep reads the
+# file, so v1.175.0/.1 FAILed on their own invocation on every host, every run
+# (measured on both hosts 2026-10-26), and those old lines, which carry the bare
+# words, stay there until logrotate ages them out. So auth.log is not scanned,
+# and every pattern is written [E]… / [P]… / [R]… so that no log line recording a
+# command that carries it can match it.
+# The windows, exactly (nothing is anchored to the migrate):
+#   *.log files  — regular files only (-type f: a directory or a dangling link
+#                  named *.log is not a log, and grep would exit 2 on it), read
+#                  WHOLE when last written in the last 2 h, so an older line in
+#                  such a file counts too;
+#   pm2.log      — only its lines stamped in the last 2 h (pm2 7.0.3's default
+#                  PM2_LOG_DATE_FORMAT prefix "YYYY-MM-DDTHH:mm:ss:", local time,
+#                  compared in the same local time); an unstamped line (a stack
+#                  frame) belongs to the stamp before it, lines before the first
+#                  stamp to none. Two known limits, accepted (refute round 2):
+#                  the stamps carry no UTC offset, so on a box not on UTC about
+#                  1 h of lines can be missed after a DST fall-back; and an
+#                  unstamped line written after a long quiet period inherits
+#                  the older stamp, so it can be missed too;
+#   the journal  — entries of the last 2 h.
+# A source that cannot be read is a FAIL, never a clean pass (refuter SHOULD-1).
+verify_permissions() {
+  local hits="" unread="" list out rc n j since units u files=()
+  if ! sudo -n true 2>/dev/null; then
+    fail "permission scan: could not read any log — sudo -n is refused for $deploy_user"; return 0
+  fi
+  # 1. *.log files last written in the last 2 h (read whole)
+  if list="$(sudo -n find "$app_home/.pm2/logs" /var/log -maxdepth 1 -type f -name '*.log' ! -name auth.log -newermt '-2 hours' -print 2>/dev/null)"; then
+    [ -z "$list" ] || mapfile -t files <<< "$list"
+    if [ "${#files[@]}" -gt 0 ]; then
+      rc=0; out="$(sudo -n grep -lsE '[E](ACCES|PERM|ROFS)' -- "${files[@]}" 2>/dev/null)" || rc=$?
+      [ "$rc" -le 1 ] || unread="${unread}the *.log files (grep exit $rc); "
+      [ -z "$out" ] || hits="${hits}$(printf '%s\n' "$out" | head -5 | tr '\n' ' ' || true)"
+    fi
+  else
+    unread="${unread}the list of *.log files written in the last 2 h; "
+  fi
+  # 2. pm2.log, its lines stamped in the last 2 h
+  if sudo -n test -e "$app_home/.pm2/pm2.log"; then
+    since="$(env -u TZ date -d '-2 hours' +%Y-%m-%dT%H:%M:%S)"
+    if j="$(sudo -n cat "$app_home/.pm2/pm2.log" 2>/dev/null)"; then
+      n="$(printf '%s\n' "$j" | awk -v since="$since" '
+        /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]:/ { w = (substr($0, 1, 19) >= since) }
+        w && /[E](ACCES|PERM|ROFS)/ { c++ }
+        END { print c + 0 }')"
+      [ "$n" -eq 0 ] || hits="${hits}$app_home/.pm2/pm2.log ($n lines stamped in the last 2 h) "
+    else
+      unread="${unread}$app_home/.pm2/pm2.log; "
+    fi
+  fi
+  # 3. the journal of pm2-<app>.service and the app account's units, the last 2 h
+  units=(-u "$pm2_unit")
+  for u in "${module_units[@]}" $(host_units); do units+=(-u "$u"); done
+  rc=0; j="$(sudo -n journalctl -q --no-pager --since '-2 hours' "${units[@]}" -o cat 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    unread="${unread}the journal of $pm2_unit and the app account's units (journalctl exit $rc); "
+  else
+    n="$(printf '%s\n' "$j" | grep -cE '[E](ACCES|PERM|ROFS)|[P]ermission denied|[R]ead-only file system' || true)"
+    [ "${n:-0}" -eq 0 ] || hits="${hits}the journal of $pm2_unit and the app account's units ($n lines) "
+  fi
+  if [ -n "$unread" ]; then fail "permission scan: could not read ${unread}a source that cannot be read is not clean"; fi
+  if [ -n "$hits" ]; then
+    fail "permission errors in: $hits"
+  elif [ -z "$unread" ]; then
+    ok "permission scan clean: *.log files written in the last 2 h (read whole), pm2.log lines and the units' journal of the last 2 h (auth.log is not an app log)"
+  fi
+}
 do_verify() {
   fails=0
-  local n u p f god main code_w state_w
+  local n u p f code_w state_w
   echo "app-user verify: aiwebsite, app account $app_user ($(date -u +%FT%TZ))"
   app_user_active && ok "split ACTIVE ($app_user_marker, root-owned)" || fail "the activation marker $app_user_marker is missing or wrong — every rendered script runs as before"
   # account
@@ -510,16 +672,8 @@ do_verify() {
   for p in .ssh .npmrc .config/npm; do sudo -n test -e "$app_home/$p" && fail "$app_home/$p exists" || ok "no $app_home/$p"; done
   [ "$(loginctl show-user "$app_user" -p Linger --value 2>/dev/null || echo none)" = "yes" ] && fail "$app_user has a lingering systemd user manager" || ok "no lingering user manager for $app_user"
   sudo -n sshd -T -C "user=$app_user,host=localhost,addr=127.0.0.1" 2>/dev/null | grep -iE "^denyusers .*\b$app_user\b" >/dev/null && ok "sshd: DenyUsers $app_user" || fail "sshd -T does not deny $app_user"
-  # processes
-  n="$(pgrep -fc 'PM2 v[0-9.]+: God Daemon' || true)"
-  god="$(pgrep -f 'PM2 v[0-9.]+: God Daemon' | head -1 || true)"
-  main="$(systemctl show -p MainPID --value "$pm2_unit" 2>/dev/null || echo 0)"
-  [ "$n" = "1" ] && [ "$god" = "$main" ] && [ "$(ps -o user:32= -p "$god" | tr -d ' ')" = "$app_user" ] \
-    && ok "one pm2 God daemon (pid $god) = $pm2_unit MainPID, user $app_user" || fail "pm2 God daemons: $n, first pid ${god:-none}, unit MainPID $main"
-  pgrep -u "$deploy_user" -f 'next-server|apps/(brain-api|skills-host)/src/server.ts|PM2 v' >/dev/null && fail "an app process still runs as $deploy_user" || ok "no app process runs as $deploy_user"
-  for p in next-server 'apps/brain-api/src/server.ts' 'apps/skills-host/src/server.ts'; do
-    pgrep -u "$app_user" -f "$p" >/dev/null && ok "$p runs as $app_user" || fail "$p is not running as $app_user"
-  done
+  verify_processes
+  verify_listeners
   # write matrix: code must be unwritable for the app account, state writable
   code_w=("$app_dir" "$app_dir/deploy" "$app_dir/deploy/setup-vm.sh" "$app_dir/deploy/extra-services.sh" "$app_dir/node_modules" "$app_dir/.next" "$app_dir/.next/BUILD_ID" "$app_dir/packages/brain" "$app_dir/packages/brain/apps" "$stage_dir" "/usr/local/lib/aiwebsite/listen-loopback.cjs" "/usr/local/bin/aiwebsite-watchdog.sh" "/etc/systemd/system" "$pm2_unit_file" "$npmrc_empty" "/var/lib/aiwebsite" "/var/lib/aiwebsite/issue-spool.d" "/home/$deploy_user")
   for f in "${deploy_written[@]}"; do [ -e "$app_dir/data/$f" ] && code_w+=("$app_dir/data/$f"); done
@@ -566,9 +720,7 @@ do_verify() {
   wait_http "$brain_health" 10 "" && ok "brain-api /health" || fail "brain-api /health"
   wait_http "$skills_health" 10 "" && ok "skills-host /health" || fail "skills-host /health"
   if [ -f "$app_dir/deploy/extra-services.json" ]; then bash "$app_dir/deploy/extra-services.sh" verify >/dev/null 2>&1 && ok "extra services verify" || fail "extra services verify"; fi
-  # permission errors since the migrate (or the last 2 h)
-  n="$(sudo -n find "$app_home/.pm2/logs" /var/log -maxdepth 1 -name '*.log' -newermt '-2 hours' -print0 2>/dev/null | sudo -n xargs -0 -r grep -lE 'EACCES|EPERM|EROFS' 2>/dev/null | head -5 || true)"
-  [ -z "$n" ] && ok "no EACCES/EPERM/EROFS in the logs written in the last 2 h" || fail "permission errors in: $(printf '%s' "$n" | tr '\n' ' ')"
+  verify_permissions
   echo "app-user verify: $fails FAIL line(s)"
   [ "$fails" -eq 0 ]
 }
