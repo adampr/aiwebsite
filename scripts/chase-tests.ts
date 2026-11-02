@@ -65,6 +65,7 @@ import { createHash } from "node:crypto";
 import {
   buildReportBody,
   partitionForReport,
+  registerHasNews,
   type ReportTask,
 } from "../src/lib/chase/report";
 import {
@@ -1950,7 +1951,29 @@ function reportTask(over: Partial<ReportTask> = {}): ReportTask {
 
 const NOW = new Date("2026-08-31T15:00:00Z");
 
-section("THE EMPTY REPORT STILL SENDS, and says so", () => {
+section("A COMPLETELY QUIET REGISTER SENDS NOTHING (owner ruling 2026-11-02)", () => {
+  // The original design sent an all-clear every Monday so silence meant
+  // breakage; the owner overruled it after weeks of zero-outstanding
+  // reports. registerHasNews is the ONE definition of quiet, and ANY row
+  // in ANY section is news: a paused or blocked row waiting on a ruling
+  // must keep arriving weekly, because nobody is being emailed about it.
+  assert.ok(!registerHasNews([], []), "nothing live, nothing closed: quiet");
+  assert.ok(registerHasNews([reportTask({ status: "open" })], []));
+  assert.ok(registerHasNews([reportTask({ status: "paused", pausedReason: "x" })], []));
+  assert.ok(registerHasNews([reportTask({ status: "blocked", blockedReason: "x" })], []));
+  assert.ok(
+    registerHasNews(
+      [reportTask({ status: "open", markedDoneAt: new Date() })],
+      []
+    ),
+    "a claim of completion still needs the owner's eye"
+  );
+  assert.ok(
+    registerHasNews([], [reportTask({ status: "done", closedAt: NOW })]),
+    "a close inside the window is news worth one line"
+  );
+  // The body a dry run prints for an empty register still renders whole,
+  // and its standing sentence states the NEW contract, not the old one.
   const body = buildReportBody({
     now: NOW,
     live: [],
@@ -1958,14 +1981,17 @@ section("THE EMPTY REPORT STILL SENDS, and says so", () => {
     lastSend: new Map(),
     nudgesEnabled: true,
   });
-  assert.ok(body.length > 200, "an empty week still produces a real report");
   assert.ok(
-    /sent every week whether or not anyone is outstanding/i.test(body),
-    "it explains why it arrived with nothing in it"
+    /arrives only when the register holds something to report/i.test(body),
+    "the body says when it arrives"
   );
   assert.ok(
-    /the job is broken/i.test(body),
-    "silence is defined as breakage, not as good news"
+    /quiet register sends nothing/i.test(body),
+    "and that a quiet register sends nothing"
+  );
+  assert.ok(
+    !/sent every week whether or not/i.test(body),
+    "the repealed always-send promise is gone from the copy"
   );
   assert.ok(body.includes("1. STILL OUTSTANDING (0)"));
   assert.ok(body.includes("2. SAID DONE BUT NOT CONFIRMED (0)"));
@@ -2528,18 +2554,31 @@ section("the weekday job CLAIMS the ledger row before it composes or sends", () 
   assert.ok(s.includes("--dry-run"), "a dry run exists");
 });
 
-section("the report job never learns to skip an empty week", () => {
+section("the quiet skip decides BEFORE the claim, and a sent week is still ledgered", () => {
+  // Owner ruling 2026-11-02: a completely quiet register sends nothing.
+  // The ORDER is the invariant worth pinning: register read, then the
+  // quiet decision, then the ledger claim, then compose. A quiet skip
+  // that claimed first would burn the day's row, and a task seeded later
+  // the same Monday could never get a hand-run report.
   const s = src("src/lib/chase/report.ts");
   assert.ok(
-    /IT SENDS EVERY WEEK/.test(s),
-    "the reason is written where the next editor will see it"
+    /A COMPLETELY QUIET REGISTER SENDS NOTHING/.test(s),
+    "the ruling is written where the next editor will see it"
   );
+  const read = s.indexOf("await tasksForReport(");
+  const quiet = s.indexOf("registerHasNews(live, recentlyClosed)");
   const claim = s.indexOf("await claimSend(");
-  const build = s.indexOf("await buildReportBodyFromDb(");
-  assert.ok(claim > 0 && build > 0 && claim < build, "claim before compose");
+  const compose = s.indexOf("await finishReportBody(");
+  assert.ok(read > 0 && quiet > read, "the quiet decision follows the read");
+  assert.ok(claim > quiet, "no ledger row is claimed on a quiet week");
+  assert.ok(compose > claim, "claim before compose");
+  assert.ok(
+    /skipped_quiet.*sendId: null/s.test(s.slice(quiet, claim)),
+    "a quiet week returns without claiming anything"
+  );
   assert.ok(
     s.includes('kind: "report"'),
-    "the report is ledgered so a restart cannot double-send it"
+    "a sent report is ledgered so a restart cannot double-send it"
   );
 });
 

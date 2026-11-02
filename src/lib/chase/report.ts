@@ -6,24 +6,35 @@
 // confirming it, and who is in the register but is NOT being emailed at
 // all. That second group is the one an unattended chaser quietly loses.
 //
-// IT SENDS EVERY WEEK, INCLUDING THE WEEK WHERE NOBODY IS OUTSTANDING.
-// That is the single most important line in this file. A report that only
-// arrives when there is bad news teaches the reader that no email means
-// everything is fine, at which point a crashed timer, a bad DATABASE_URL, a
-// revoked Resend key and a genuinely empty register are indistinguishable
-// from the inbox. Sending an "all clear" every Monday makes silence mean
-// exactly one thing: this is broken, go look.
+// SINCE 2026-11-02 A COMPLETELY QUIET REGISTER SENDS NOTHING. The
+// original design sent an "all clear" every Monday so that silence meant
+// exactly one thing: the job is broken, go look. The owner overruled that
+// on 2026-11-02 after weeks of zero-outstanding all-clears: no email when
+// there is nothing to report. The cost is accepted knowingly: during a
+// quiet stretch a crashed timer, a bad DATABASE_URL, a revoked Resend key
+// and a genuinely empty register once again look the same from the inbox.
+// What remains of the breakage signal: a run that FAILS still exits 1 and
+// fires the unit's OnFailure CRITICAL email; only a run that never happens
+// at all is silent. registerHasNews() below is the ONE definition of
+// "quiet": no live row in ANY status a person could still act on (open,
+// said done, paused, blocked) AND nothing closed inside the report window.
+// A single paused or blocked row still sends every Monday on purpose:
+// those are exactly the rows nobody is being emailed about, and the weekly
+// repeat is the only thing keeping them in front of the owner.
 //
-// buildReportBody() is PURE. The send below it claims a chase_sends row
-// with kind='report' FIRST, so the same unique index that stops a colleague
-// being nudged twice in a day stops the owner getting two reports after a
-// restart, a hand run or an overlapping timer fire. The report's claim is
+// buildReportBody() is PURE. The send below reads the register FIRST (the
+// quiet decision must not burn a ledger row: an unclaimed Monday is what
+// lets a task seeded later the same day still get a hand-run report), then
+// claims a chase_sends row with kind='report' BEFORE composing, so the
+// same unique index that stops a colleague being nudged twice in a day
+// stops the owner getting two reports after a restart, a hand run or an
+// overlapping timer fire. The report's claim is
 // RECLAIMABLE while its outcome is not 'accepted' (claimSend's
 // reclaimUnlessAccepted), because for this one message the thing that must
 // not happen twice is a DELIVERY, and a claim that survived a failure would
 // otherwise make a hand re-run the same day impossible and report the lost
 // week as "already sent". scripts/chase-report.ts additionally exits
-// NONZERO on a refusal so the unit's OnFailure alert turns a silent week
+// NONZERO on a refusal so the unit's OnFailure alert turns a failed week
 // into an email: the report is the one message with no backstop, since the
 // only thing that would have reported its failure is the report.
 //
@@ -216,7 +227,7 @@ export function buildReportBody(input: ReportInput): string {
   const out: string[] = [
     `Weekly chase report, ${utcDateKey(input.now)} (UTC).`,
     ``,
-    `This email is sent every week whether or not anyone is outstanding. If a Monday goes by with no report, the job is broken; it does not mean everyone is up to date.`,
+    `This email arrives only when the register holds something to report: someone outstanding, a claim of completion, a row waiting on your ruling, or a close this week. A completely quiet register sends nothing (your ruling, 2026-11-02).`,
     ``,
     `Outstanding: ${s.outstanding.length}. Said done but not confirmed: ${s.claimedDone.length}. Needing a ruling from you: ${needsRuling}. Closed in the last ${CHASE_CAPS.recentlyClosedDays} days: ${recentlyClosed.length}.`,
   ];
@@ -345,15 +356,34 @@ export type ReportSendStatus =
   | "sent"
   | "refused"
   | "already_sent_today"
+  | "skipped_quiet"
   | "threw";
 
-/** Claim, compose, send, stamp. The claim comes FIRST and the report is not
- * composed at all if the claim loses: a second process getting as far as
- * building the body would still have read the register twice for nothing. */
+/** PURE. The owner's 2026-11-02 ruling: no email when there is nothing to
+ * report. "News" is any live row (open, said done, paused or blocked all
+ * count: the last two are exactly the rows nobody is being emailed about,
+ * so the weekly repeat is what keeps them in front of the owner) or any
+ * row closed inside the report window (a close is news worth one line).
+ * Only a register with neither sends nothing. */
+export function registerHasNews(
+  live: readonly ReportTask[],
+  recentlyClosed: readonly ReportTask[]
+): boolean {
+  return live.length > 0 || recentlyClosed.length > 0;
+}
+
+/** Read, maybe skip, claim, compose, send, stamp. The register read comes
+ * FIRST (the quiet skip must not claim a ledger row: a task seeded later
+ * the same Monday can still get a hand-run report), the claim comes before
+ * COMPOSE: a second process losing the race has read the register once but
+ * composes and sends nothing. */
 export async function sendChaseReport(now = new Date()): Promise<{
   status: ReportSendStatus;
   sendId: string | null;
 }> {
+  const { live, recentlyClosed } = await tasksForReport(now);
+  if (!registerHasNews(live, recentlyClosed))
+    return { status: "skipped_quiet", sendId: null };
   const to = adminRecipient();
   // reclaimUnlessAccepted: the dedupe key for the REPORT is a SUCCESSFUL
   // send, not the existence of a row. Without it one transient failure
@@ -372,7 +402,7 @@ export async function sendChaseReport(now = new Date()): Promise<{
   });
   if (!sendId) return { status: "already_sent_today", sendId: null };
   try {
-    const body = await buildReportBodyFromDb(now);
+    const body = await finishReportBody(now, live, recentlyClosed);
     const ok = await sendGovernanceEmail({
       to,
       subject: CHASE_REPORT_SUBJECT,
@@ -395,6 +425,17 @@ export async function sendChaseReport(now = new Date()): Promise<{
  * would send, without claiming a ledger row. */
 export async function buildReportBodyFromDb(now: Date): Promise<string> {
   const { live, recentlyClosed } = await tasksForReport(now);
+  return finishReportBody(now, live, recentlyClosed);
+}
+
+/** The two remaining reads, then the pure builder. Split from
+ * buildReportBodyFromDb so sendChaseReport composes from the SAME register
+ * read its quiet decision was made on, instead of reading twice. */
+async function finishReportBody(
+  now: Date,
+  live: ChaseTask[],
+  recentlyClosed: ChaseTask[]
+): Promise<string> {
   const lastSend = await latestNudgeByAssignee(now);
   // The same liveness read the weekday job skips on, so the report can only
   // ever say "nobody is being emailed about this row" when that is true.

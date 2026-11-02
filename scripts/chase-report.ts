@@ -9,11 +9,17 @@
 //                                        would send; claim nothing, send
 //                                        nothing, write nothing
 //
-// IT SENDS EVERY WEEK, EVEN WHEN NOTHING IS OUTSTANDING. See the header of
-// src/lib/chase/report.ts: an all-clear every Monday is what makes silence
-// mean "the job is broken" instead of "everything is fine". Do not add a
-// "skip when empty" shortcut here; it would be the second bug and nobody
-// would notice the first.
+// SINCE 2026-11-02 A COMPLETELY QUIET REGISTER SENDS NOTHING (owner
+// ruling, after weeks of zero-outstanding all-clears). Any row in any
+// section still sends: one paused or blocked row waiting on a ruling
+// arrives every Monday on purpose, because those are the rows nobody is
+// being emailed about. The skip happens in sendChaseReport BEFORE the
+// ledger claim, so a quiet Monday burns no row and a task seeded later
+// the same day still gets a hand-run report. The old all-clear existed so
+// silence meant breakage; that signal is narrowed, knowingly: a run that
+// FAILS still exits 1 and fires the OnFailure CRITICAL email, but a timer
+// that silently never fires during a quiet stretch now looks the same as
+// a quiet register. See the header of src/lib/chase/report.ts.
 //
 // The send claims a chase_sends row with kind='report' before composing,
 // so the same chase_send_day_uq index that stops a colleague being nudged
@@ -35,10 +41,15 @@
 // Exit 1 also when the register could not be read or the send threw.
 
 import "./lib/governance-env";
-import { chaseReportEnabled, utcDateKey } from "../src/lib/chase/config";
-import { deployInProgress } from "../src/lib/chase/db";
+import {
+  CHASE_CAPS,
+  chaseReportEnabled,
+  utcDateKey,
+} from "../src/lib/chase/config";
+import { deployInProgress, tasksForReport } from "../src/lib/chase/db";
 import {
   buildReportBodyFromDb,
+  registerHasNews,
   sendChaseReport,
 } from "../src/lib/chase/report";
 
@@ -84,6 +95,11 @@ async function main(): Promise<void> {
 
   if (DRY) {
     log(`DRY RUN for UTC day ${utcDateKey(now)}: nothing claimed, nothing sent.`);
+    const { live, recentlyClosed } = await tasksForReport(now);
+    if (!registerHasNews(live, recentlyClosed))
+      log(
+        `the register is quiet, so a LIVE run today would SKIP the send entirely (owner ruling, 2026-11-02). The body below is what a non-quiet week looks like.`
+      );
     console.log("");
     console.log(await buildReportBodyFromDb(now));
     return;
@@ -93,6 +109,11 @@ async function main(): Promise<void> {
   switch (result.status) {
     case "sent":
       log(`sent (ledger row ${result.sendId?.slice(0, 8)})`);
+      return;
+    case "skipped_quiet":
+      log(
+        `the register is quiet (no open, said-done, paused or blocked rows, nothing closed in the last ${CHASE_CAPS.recentlyClosedDays} days): no report this week, by the owner's 2026-11-02 ruling. No ledger row was claimed, so seeding a task and re-running today still sends.`
+      );
       return;
     case "already_sent_today":
       log(
