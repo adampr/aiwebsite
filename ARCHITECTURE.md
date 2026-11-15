@@ -13316,7 +13316,7 @@ an optional `sectionsJson` lands in the SAME fenced UPDATE, fix T2).
   `{by: the session email, at: now}`), else 409 `confidential_unconfirmed`
   naming the TITLE; renumbered densely, mappings follow their documents.
   When the pick list changes (fix T2, F3) the same fenced UPDATE stamps
-  `pickedAt` and rewrites every `{{att:N}}` stored in the proposal's
+  `pickedAt` (only when a pick is ADDED, as above) and rewrites every `{{att:N}}` stored in the proposal's
   sections (paragraphs, answers, every block string, titles, the letter):
   old n -> new n, a removed pick's (and any n no pick carried) -> `{{att:0}}`,
   which strips at render, so a citation follows its document through a

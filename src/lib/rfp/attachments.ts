@@ -609,8 +609,8 @@ export type SetPicksResult =
  *     follows its DOCUMENT to its new number (a removed pick leaves the
  *     entry's other numbers and section; an entry left with nothing is
  *     unmapped; 0 stays 0);
- *   - pickedAt becomes `now` when the pick list changes (membership or
- *     order), else stays as it was, so a re-sent identical list is a no-op.
+ *   - pickedAt becomes `now` only when the set ADDS a pick (fix F3); a
+ *     reorder, a removal or a re-sent identical list keeps it as it was.
  */
 export function planSetPicks(input: {
   current: ProposalAttachments;

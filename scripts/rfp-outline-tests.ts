@@ -1488,7 +1488,9 @@ check(
     [{ picks: [{ docId: D1, n: 1, title: "Doc A" }, { docId: D4, n: 2, title: "IR Procedure" }, { docId: D2, n: 3, title: "Doc B", confidentialConfirmed: CONF }], map: { [R1]: 1, [R2]: 0 }, pickedAt: CONF.at }, 1, 0, 0]
   );
   const drop = set(once, [D2]);
-  check("set: removing a pick unmaps the requirements mapped to it", drop.ok ? drop.state : drop, { picks: [{ docId: D2, n: 1, title: "Doc B", confidentialConfirmed: CONF }], map: { [R2]: 0 }, pickedAt: CONF.at });
+  // A removal does not stamp pickedAt (fix F3, ARCHITECTURE §5.17.23: only an ADDITION does), so a removal from
+  // `once` (no stamp) leaves none. The expectation carried a stamp from before F3 and was red from 56640bcb on.
+  check("set: removing a pick unmaps the requirements mapped to it (and stamps no pickedAt)", drop.ok ? drop.state : drop, { picks: [{ docId: D2, n: 1, title: "Doc B", confidentialConfirmed: CONF }], map: { [R2]: 0 } });
   const heldRetired = set({ picks: [{ docId: D3, n: 1, title: "Retired doc" }], map: {} }, [D3, D1]);
   check("set: an id already picked stays even when its row has retired; a NEW retired or unknown id is a 404", [heldRetired.ok, set(none, [D3]).ok ? 0 : (set(none, [D3]) as { status: number }).status, set(none, ["55555555-5555-4555-8555-555555555555"]).ok], [true, 404, false]);
   check(
@@ -1496,7 +1498,7 @@ check(
     [set(none, [D1, D1]), set(none, ["x"]), set(none, D1), set(none, Array.from({ length: 31 }, () => D1)), set(none, [D1], [D2]), set(none, [D1], "x")].map((r) => (r.ok ? "ok" : r.status)),
     [400, 400, 400, 400, 400, 400]
   );
-  check("set: an empty list clears every pick (and the map entries pointing at one)", (() => { const r = set(once, []); return r.ok ? r.state : r; })(), { picks: [], map: { [R2]: 0 }, pickedAt: CONF.at });
+  check("set: an empty list clears every pick (and the map entries pointing at one), stamping no pickedAt (a removal)", (() => { const r = set(once, []); return r.ok ? r.state : r; })(), { picks: [], map: { [R2]: 0 } });
 
   // Round 35 fix F3: pickedAt, stamped by a set that changes the picks.
   const stamped = { ...once, pickedAt: "2026-10-01T09:00:00.000Z" };
