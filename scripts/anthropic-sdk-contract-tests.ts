@@ -32,6 +32,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   VISION_FALLBACK_BETA,
   VISION_MAX_TOKENS,
+  VISION_MIN_CALL_MS,
   VISION_MODEL,
   VISION_SYSTEM_PROMPT,
   extractVisionText,
@@ -128,6 +129,9 @@ async function main() {
     check("529: the log line names status and request id only", warns.at(-1), "[rfp] vision transcription failed: api_error status 529 request req_529");
 
     // The budget runs out before the first byte: the abort maps to timeout.
+    // The budget is exactly VISION_MIN_CALL_MS (10 s): anything smaller is
+    // refused before any request (extractVisionText's own floor), which would
+    // not exercise the SDK's abort path at all.
     calls = [];
     respond = () => new Response(new ReadableStream({ start() {} }), { status: 200, headers: { "content-type": "text/event-stream" } });
     const realFetch = globalThis.fetch;
@@ -136,11 +140,11 @@ async function main() {
         calls.push({ url: String(input instanceof Request ? input.url : input), method: (init?.method ?? "GET").toUpperCase(), headers: {}, body: {} });
         init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
       })) as typeof fetch;
-    const slow = await extractVisionText({ name: "x.pdf", buf: pdf, mediaType: "application/pdf", budgetMs: 50, maxChars: 10_000 });
+    const slow = await extractVisionText({ name: "x.pdf", buf: pdf, mediaType: "application/pdf", budgetMs: VISION_MIN_CALL_MS, maxChars: 10_000 });
     globalThis.fetch = realFetch;
     check("budget exhausted before the first byte: maps to timeout", slow, { ok: false, reason: "timeout" });
-    console.log(`info timeout warn lines: ${JSON.stringify(warns.slice(-3))}`);
-    check("timeout: a log line names the reason", warns.some((w) => /^\[rfp\] vision transcription failed: timeout\b/.test(w)), true);
+    check("timeout: the request was sent (the SDK's abort path ran, not the pre-request floor)", calls.length, 1);
+    check("timeout: the log line starts with the reason", /^\[rfp\] vision transcription failed: timeout\b/.test(warns.at(-1) ?? ""), true);
   } finally {
     console.warn = realWarn;
   }
