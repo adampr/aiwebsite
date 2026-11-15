@@ -1500,7 +1500,7 @@ check(
   );
   check("set: an empty list clears every pick (and the map entries pointing at one), stamping no pickedAt (a removal)", (() => { const r = set(once, []); return r.ok ? r.state : r; })(), { picks: [], map: { [R2]: 0 } });
 
-  // Round 35 fix F3: pickedAt, stamped by a set that changes the picks.
+  // Round 35 fix F3: pickedAt, stamped only by a set that ADDS a pick.
   const stamped = { ...once, pickedAt: "2026-10-01T09:00:00.000Z" };
   const same = set(stamped, [D2, D1]);
   const moved = set(stamped, [D1, D2]);

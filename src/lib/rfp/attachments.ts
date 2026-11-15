@@ -16,7 +16,8 @@
 //   object form maps one request to several picks and/or to the section of
 //   this response that answers it (a single pick with no section is always
 //   stored as the bare n, so the legacy n | 0 values read forever);
-//   pickedAt is stamped by every {op:"set"} write that changes the picks.
+//   pickedAt is stamped only by an {op:"set"} write that ADDS a pick (fix F3);
+//   a reorder, a removal or a re-sent identical list leaves it as it was.
 //   The model's only citation form is the literal token {{att:N}}; the
 //   renderer resolves it (furniture.ts resolveAttTokens) and strips an N that
 //   is not picked, at ONE choke point. The brain never sees a library byte:
@@ -351,8 +352,8 @@ export type AttachmentPick = {
 export type AttachmentMapValue = number | { ns: number[]; section?: string };
 
 /** The parsed column. `map` is always an object here ({} when none);
- *  pickedAt is the ISO time of the last {op:"set"} write that changed the
- *  picks, absent when none recorded one. */
+ *  pickedAt is the ISO time of the last {op:"set"} write that ADDED a pick
+ *  (a reorder or a removal does not move it), absent when none recorded one. */
 export type ProposalAttachments = {
   picks: AttachmentPick[];
   map: Record<string, AttachmentMapValue>;
