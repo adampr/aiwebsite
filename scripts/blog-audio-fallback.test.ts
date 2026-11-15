@@ -184,10 +184,54 @@ async function narrate(cfg: SiteConfig, primarySeen: string[], puts: { voice: st
   return { res, lines, state };
 }
 
+const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
+const DUMMY_GEMINI_KEY = "gm-host-test-dummy-key-0000";
+
+/** Replace global fetch with one stub for BOTH configured seams, routed by
+ *  URL: the Gemini primary renders every chunk except the spoken TL;DR label,
+ *  which it refuses with Gemini's 400 (the non-retried bad-request class);
+ *  Deepgram answers as stubFetch() does. Nothing reaches the network. */
+function configuredPrimaryFetch(): { gemini: Call[]; deepgram: Call[]; other: Call[] } {
+  const seen = { gemini: [] as Call[], deepgram: [] as Call[], other: [] as Call[] };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u === GEMINI_ENDPOINT) {
+        seen.gemini.push({ url: u, init: init ?? {} });
+        const body = JSON.parse(String(init?.body ?? "{}")) as { input?: { content?: { text?: string }[] }[] | string };
+        const text = typeof body.input === "string" ? body.input : (body.input?.[0]?.content?.[0]?.text ?? "");
+        if (text === TLDR_SPOKEN) {
+          return new Response(
+            JSON.stringify({ error: { code: 400, message: "Model tried to generate text", status: "INVALID_ARGUMENT" } }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        const pcm = Buffer.alloc(Math.ceil(text.length / 14) * 24_000 * 2);
+        return new Response(
+          JSON.stringify({ output_audio: { type: "audio", mime_type: "audio/l16", sample_rate: 24_000, data: pcm.toString("base64") } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (u.startsWith(DEEPGRAM_SPEAK)) {
+        seen.deepgram.push({ url: u, init: init ?? {} });
+        const { text } = JSON.parse(String(init?.body ?? "{}")) as { text: string };
+        const bytes = new Uint8Array(Math.ceil(text.length / 14) * 24_000 * 2);
+        return new Response(bytes.buffer as ArrayBuffer, { status: 200, headers: { "content-type": "audio/l16;rate=24000" } });
+      }
+      seen.other.push({ url: u, init: init ?? {} });
+      return new Response("unexpected request in a hermetic test", { status: 599 });
+    }),
+  );
+  return seen;
+}
+
 let savedKey: string | undefined;
+let savedGeminiKey: string | undefined;
 let logged: string[];
 beforeEach(() => {
   savedKey = process.env.DEEPGRAM_API_KEY;
+  savedGeminiKey = process.env.GOOGLE_GEMINI_API_KEY;
   logged = [];
   for (const m of ["log", "info", "warn", "error"] as const) {
     vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
@@ -198,6 +242,8 @@ beforeEach(() => {
 afterEach(() => {
   if (savedKey === undefined) delete process.env.DEEPGRAM_API_KEY;
   else process.env.DEEPGRAM_API_KEY = savedKey;
+  if (savedGeminiKey === undefined) delete process.env.GOOGLE_GEMINI_API_KEY;
+  else process.env.GOOGLE_GEMINI_API_KEY = savedGeminiKey;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -292,5 +338,53 @@ describe("site.config.ts wires Deepgram as the article-audio fallback (module v1
     expect(puts).toHaveLength(0);
     expect(lines.join("\n")).not.toContain(DUMMY_KEY);
     expect(logged.join("\n")).not.toContain(DUMMY_KEY);
+  });
+
+  // R2a finding I1: the arms above inject their OWN refusing primary, so a
+  // wrapper in site.config.ts around the CONFIGURED primary that swallowed
+  // its refusals would pass them. This arm runs both generators exactly as
+  // site.config.ts exports them; only fetch is stubbed (dummy keys, no network).
+  it("the CONFIGURED primary's refusal reaches the Deepgram fallback (no host wrapper swallows it)", async () => {
+    const seen = configuredPrimaryFetch();
+    process.env.GOOGLE_GEMINI_API_KEY = DUMMY_GEMINI_KEY;
+    const cfg = await loadSiteConfig(DUMMY_KEY);
+    const lines: string[] = [];
+    const state = newAudioRunState();
+    const puts: { voice: string; modelId: string }[] = [];
+    const res = await runAudioHook(runConfig(cfg.blog.audioGenerator, cfg.blog.audioFallbackGenerator), {
+      slug: "a",
+      type: "news",
+      doc,
+      lines,
+      state,
+      phase: "A",
+      targeted: false,
+      deps: {
+        storage: {
+          put: async (f: { voice: string; modelId: string }) => {
+            puts.push({ voice: f.voice, modelId: f.modelId });
+            return { url: "/blog/audio/a.mp3?v=abc" };
+          },
+        } as never,
+        sleep: async () => {},
+      },
+    });
+
+    const geminiTexts = seen.gemini.map((c) => {
+      const b = JSON.parse(String(c.init.body)) as { input?: { content?: { text?: string }[] }[] | string };
+      return typeof b.input === "string" ? b.input : (b.input?.[0]?.content?.[0]?.text ?? "");
+    });
+    expect(seen.other).toEqual([]);
+    expect(geminiTexts).toContain(TLDR_SPOKEN);
+    expect(state.fallbackRenders).toHaveLength(1);
+    expect(seen.deepgram.length).toBeGreaterThan(1);
+    const sent = seen.deepgram.map((c) => (JSON.parse(String(c.init.body)) as { text: string }).text);
+    expect(sent).toContain(TLDR_SPOKEN);
+    expect(puts).toEqual([{ voice: VOICE, modelId: VOICE }]);
+    expect(res.warn).toBe(false);
+    for (const k of [DUMMY_KEY, DUMMY_GEMINI_KEY]) {
+      expect(lines.join("\n")).not.toContain(k);
+      expect(logged.join("\n")).not.toContain(k);
+    }
   });
 });
