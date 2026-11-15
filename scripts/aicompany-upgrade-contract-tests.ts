@@ -1,5 +1,5 @@
 // Host contract tests for the @aicompany/core climb v1.142.2 -> v1.169.0
-// (2026-10-23). Each case pins ONE assumption this host makes about a release
+// (2026-10-23), kept current at each later pin (v1.176.1: 2026-11-15). Each case pins ONE assumption this host makes about a release
 // in that range, read off the REAL resolved site.config (and the real module
 // exports), so a later bump that moves one of them goes red here instead of on
 // the VM. Run: npm run test:aicompany (tsx, no DB, no network, no mail).
@@ -30,15 +30,30 @@ const blog = siteConfig.blog;
 const read = (p: string) => readFileSync(p, "utf8");
 
 async function main() {
-  await ok("pin: the module checkout is v1.171.0 and the lockfile's link entry agrees", () => {
+  // The expected version moves with every pin bump, in the pin commit. It
+  // read 1.171.0 through the v1.172.0..v1.175.2 pins (red since the v1.172.0
+  // bump; corrected with the v1.176.1 pin, 2026-11-15).
+  await ok("pin: the module checkout is v1.176.1 and the lockfile's link entry agrees", () => {
     const mod = JSON.parse(read("packages/aicompany/package.json"));
     const lock = JSON.parse(read("package-lock.json"));
-    assert.equal(mod.version, "1.171.0");
+    assert.equal(mod.version, "1.176.1");
     assert.equal(lock.packages["packages/aicompany"].version, mod.version);
     // npm ci refuses a lock whose link entry disagrees with the linked
     // package.json (the v1.158.1 roleplay deploy failure): the recorded
     // devDependency ranges must be the module's own.
     assert.deepEqual(lock.packages["packages/aicompany"].devDependencies, mod.devDependencies);
+  });
+
+  await ok("v1.176.1: one vite in the tree, 8.x at or above the patched 8.3.3; no 7.x copy anywhere", () => {
+    const lock = JSON.parse(read("package-lock.json"));
+    const vites = Object.entries(lock.packages as Record<string, { version?: string }>)
+      .filter(([k]) => k === "node_modules/vite" || k.endsWith("/node_modules/vite"))
+      .map(([k, v]) => [k, v.version ?? ""] as const);
+    assert.ok(vites.length >= 1, "vite is in the lock (the module's test runner needs it)");
+    for (const [k, v] of vites) {
+      const [maj, min, pat] = v.split(".").map(Number);
+      assert.ok(maj === 8 && (min > 3 || (min === 3 && pat >= 3)), `${k} is ${v}: the five vite advisories of MIGRATIONS v1.176.1 need 8.3.3 or later`);
+    }
   });
 
   await ok("v1.158.1/v1.165.1: no second next/react nested under the module (one router context)", () => {
