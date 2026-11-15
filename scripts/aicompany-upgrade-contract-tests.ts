@@ -132,10 +132,13 @@ async function main() {
       generation_config: { speech_config: [{ voice: "Charon" }] },
     });
     assert.doesNotMatch(read("site.config.ts"), /gemini-2\.5-flash-preview-tts/);
-    // The fallback must stay a different (voice, model) pair.
+    // The fallback must stay a different (voice, model) pair. Since v1.176.0
+    // it is Deepgram's aura-2-orpheus-en (the voice IS the model id); the
+    // failover itself is pinned by the test:audiofallback script.
     const fb = blog.audioFallbackGenerator;
     assert.ok(fb);
     assert.notDeepEqual([fb.voiceLabel, fb.modelId], [gen.voiceLabel, gen.modelId]);
+    assert.deepEqual([fb.voiceLabel, fb.modelId], ["aura-2-orpheus-en", "aura-2-orpheus-en"]);
   });
 
   await ok("v1.158.0/v1.164.0/v1.166.0: derived brain-call ceiling stays 12 (1+5+3+3, no refresh, no meta, no mechanics)", () => {

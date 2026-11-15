@@ -14,8 +14,8 @@
 import { defineSiteConfig } from "@aicompany/core/config";
 import { createGeminiHeroGenerator } from "@aicompany/core/blog/hero";
 import {
+  createDeepgramTtsSynthesizer,
   createGeminiTtsSynthesizer,
-  createOpenAiTtsSynthesizer,
 } from "@aicompany/core/blog/audio-tts";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
@@ -950,20 +950,21 @@ export const siteConfig = defineSiteConfig({
     // ~43 identical calls on 2026-08-27 — so the module now RETRIES it, bounded,
     // before anything reaches this seam. Any rate quoted for that class is an
     // order of magnitude, not a property of the vendor.
-    audioFallbackGenerator: createOpenAiTtsSynthesizer({
-      apiKey: process.env.OPENAI_API_KEY,
-      // "ballad", chosen on a measurement rather than on register: the module's
-      // contentGate requires >=60% of energy in the 200-4000 Hz speech band, and
-      // 6 of 11 OpenAI voices fail it on timbre alone. Scored against that exact
-      // gate 2026-08-25, ballad is 74-78.5%; "ash", wired here first, passed at
-      // 61.5% — 1.5 points of margin, which is not margin for an unattended
-      // nightly path. Deliberately NOT roleplay's "coral": every host wiring the
-      // same fallback would make the fleet sound identical on exactly the
-      // articles that fail over. Re-check with
-      // `tsx packages/aicompany/cli/check-tts-voice.ts` before changing it.
-      voice: "ballad",
-      instructions: "Read calmly, like a news narrator. Even pace, no theatrics.",
-    }),
+    //
+    // Deepgram Aura-2 since module v1.176.0 (MIGRATIONS "Host adoption" step
+    // 4; owner decision 2026-11-12, "Test and switch now", "Deepgram, you
+    // pick"): OpenAI shuts down gpt-4o-mini-tts, the model of the OpenAI seam
+    // this host used here (voice ballad), on 2027-01-06. In Deepgram the voice
+    // IS the model id. "aura-2-orpheus-en" is this host's pick in MIGRATIONS
+    // v1.176.0 step 3 (one distinct voice per host, so the fleet does not sound
+    // identical on exactly the articles that fail over; orpheus scored 74.9%
+    // against the module's 60% speech-band gate on 2026-11-12). Re-score with
+    // `tsx packages/aicompany/cli/check-tts-voice.ts --vendor deepgram --voices
+    // aura-2-orpheus-en` (at least three runs) before ever changing it. A
+    // missing key makes this seam decline: the article publishes silent and
+    // the run warns (`refusal-fallback-declined`). Pinned by
+    // `npm run test:audiofallback`.
+    audioFallbackGenerator: createDeepgramTtsSynthesizer({ apiKey: process.env.DEEPGRAM_API_KEY, voice: "aura-2-orpheus-en" }),
     heroImage: createGeminiHeroGenerator({
       // GOOGLE_GEMINI_API_KEY is this host's canonical Gemini var (set
       // 2026-07-10 for the brain planner; the brain reads exactly this name

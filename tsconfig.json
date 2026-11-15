@@ -37,7 +37,8 @@
     "node_modules",
     "packages/brain",
     // The module's test suite runs from packages/aicompany with its own
-    // devDependencies (vitest) — not installed at the host root.
+    // devDependencies and config (the host root names vitest too, since
+    // 2026-11-15, only for scripts/blog-audio-fallback.test.ts).
     "packages/aicompany/tests",
     "packages/aicompany/vitest.config.ts"
   ]
