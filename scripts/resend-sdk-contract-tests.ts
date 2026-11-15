@@ -18,7 +18,8 @@
  * an API error comes back in `error` instead of throwing. Added by the
  * 2026-10-09 dependency-upgrade train (resend 6.17.1 -> 6.32.1); call 2 and
  * the module call-site note added after the 2026-10-10 refute (F1); the
- * dot-segment refusal cases added by the 2026-10-19 round 2 (6.34.1).
+ * dot-segment refusal cases added by the 2026-10-19 round 2 (6.34.1), and
+ * their backslash / whitespace spellings by the 2026-11-15 round (6.38.1).
  */
 import { isDeepStrictEqual } from "node:util";
 import { Resend } from "resend";
@@ -85,8 +86,12 @@ async function main() {
     // error envelope and NO request, never a throw. emailId comes from the
     // inbound webhook, so a hostile "." / ".." / "%2e%2e" must land in the
     // `error` branch that email-intake.ts:480 already handles. Added by the
-    // 2026-10-19 dependency round 2 (6.32.1 -> 6.34.1); red on 6.32.1. ──
-    for (const id of [".", "..", "%2e%2e"]) {
+    // 2026-10-19 dependency round 2 (6.32.1 -> 6.34.1); red on 6.32.1.
+    // The backslash and trailing-whitespace spellings of a dot segment are
+    // refused since 6.36/6.37 (added by the 6.34.1 -> 6.38.1 round,
+    // 2026-11-15). A LEADING space (" ..") is not refused by 6.38.1: measured,
+    // the request goes out, so it is not pinned here. ──
+    for (const id of [".", "..", "%2e%2e", "..\\x", ".. "]) {
       console.error = () => {};
       stubFetch(200, { id, from: "a@example.test" });
       let threw = false;
