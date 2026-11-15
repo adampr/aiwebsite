@@ -4,6 +4,7 @@
 // the swap, rollback, conflict-park, and delete-guard transactions, asserts
 // every invariant, and cleans up. Run: npm run test:workupdate (needs
 // DATABASE_URL; not part of the pure test:work suite).
+import { summaryGuard } from "./lib/summary-guard";
 import "./lib/governance-env";
 import assert from "node:assert";
 import { db, schema } from "../src/lib/db";
@@ -91,6 +92,7 @@ async function main() {
   // skipped, never as passed. On the dev box's primary checkout governance-env
   // loads the .env, DATABASE_URL is set, and the whole flow runs as before.
   if (!process.env.DATABASE_URL) {
+    guard.reached();
     console.log(
       "SKIPPED test:workupdate: needs DATABASE_URL (a real Postgres with migration 0033; it writes and deletes ZZTEST rows); none is set here, so nothing ran"
     );
@@ -1000,10 +1002,13 @@ async function main() {
   );
 
   await cleanup();
+  guard.reached();
   console.log("update-flow-test: all assertions passed.");
   process.exit(0);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("update-flow-test");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

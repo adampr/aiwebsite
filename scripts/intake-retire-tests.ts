@@ -7,6 +7,7 @@
 // every case here drives the REAL predicate and records exactly which resolve
 // calls it would have made.
 
+import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import {
@@ -343,9 +344,12 @@ async function main() {
     }
   });
 
+  guard.reached();
   console.log(`intake-retire-tests: ${passed} sections passed.`);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("intake-retire-tests");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

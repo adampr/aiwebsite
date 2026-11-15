@@ -2,6 +2,7 @@
 // archive inspection (required-doc rule, zip hardening, secret scan) and the
 // deterministic card lint. Run: npm run test:work (tsx, no DB, no brain).
 
+import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
 import JSZip from "jszip";
 import {
@@ -8145,9 +8146,12 @@ async function main() {
     );
   }
 
+  guard.reached();
   console.log("work-tests: all assertions passed.");
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("work-tests");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

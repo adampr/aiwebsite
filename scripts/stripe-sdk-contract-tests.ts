@@ -17,6 +17,7 @@
  * re-run by the 2026-11-15 round (23.0.1 -> 23.1.0: 2026-09-30.endive ->
  * 2026-10-28.endive, which Stripe marks non-breaking).
  */
+import { summaryGuard } from "./lib/summary-guard";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { isDeepStrictEqual } from "node:util";
@@ -137,8 +138,11 @@ async function main() {
   check("unknown session throws a Stripe.errors.StripeError", threw, true);
 
   await new Promise<void>((r) => server.close(() => r()));
+  guard.reached();
   console.log(failures ? `\n${failures} FAILED` : "\nall stripe SDK contract checks passed");
   process.exit(failures ? 1 : 0);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("stripe sdk contract");
 main().catch((e) => { console.error(e); process.exit(1); });

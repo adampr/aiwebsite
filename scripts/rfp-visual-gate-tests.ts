@@ -14,6 +14,7 @@
  * loaded the same way as the existing ones (a missing file is a clean ENOENT).
  */
 
+import { summaryGuard } from "./lib/summary-guard";
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
@@ -1071,7 +1072,10 @@ async function files() {
   check("docx: embedded fonts stay plain TTF", Object.keys(zip.files).some((f) => f.startsWith("word/fonts/") && f.endsWith(".ttf")));
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("rfp visual gate");
 files().then(() => {
+  guard.reached();
   console.log(failures === 0 ? "\nall visual gate checks passed" : `\n${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 });

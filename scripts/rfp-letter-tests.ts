@@ -26,6 +26,7 @@
  * the only change with them, and {{att:N}} surviving every screen.
  */
 
+import { summaryGuard } from "./lib/summary-guard";
 import crypto from "node:crypto";
 import http from "node:http";
 import { screenLetterThesis, screenPartDek, screenPartTitle, screenProposalHeadline, screenQuestionnaireAnswers } from "../src/lib/rfp/brain";
@@ -1308,12 +1309,15 @@ check(
   check("answers: never throws on garbage", [sc(null as never), sc(["x", 1, null, [a({})]] as never), screenQuestionnaireAnswers([a({})], { refs: undefined as never, facts: F, sectionCites: [], validRateCodes: [] })].map((r) => r.answers.length), [0, 0, 0]);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("rfp letter tests");
 brainPins()
   .catch((err) => {
     failures++;
     console.log(`FAIL brain pins threw: ${err instanceof Error ? err.message : String(err)}`);
   })
   .then(() => {
+    guard.reached();
     if (failures) {
       console.log(`\n${failures} failing`);
       process.exit(1);

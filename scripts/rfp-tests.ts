@@ -17,6 +17,7 @@
  * pass. mv rides the same HMAC-signed cookie the gate reads in production.
  */
 
+import { summaryGuard } from "./lib/summary-guard";
 import "dotenv/config";
 import crypto from "node:crypto";
 
@@ -66,13 +67,17 @@ async function main() {
     r1.status === 307 && r2.denied && r3.denied && r4.denied &&
     r5.denied && r5b.granted && r5c.denied && r5d.denied &&
     r6.granted && r7.status === 307 && r8.granted;
+  guard.reached();
   console.log(pass ? "ALL GATE ASSERTIONS PASSED" : "*** GATE FAILURE ***");
   process.exit(pass ? 0 : 1);
 }
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("rfp access-gate tests");
 main().catch((err) => {
   // The HTTP assertions need a running instance; the static audit above does
   // not, so a missing server is a skip rather than a failure.
   if (String(err?.message ?? err).includes("fetch failed")) {
+    guard.reached();
     console.log(
       `\n(no server at ${BASE} — HTTP gate assertions skipped; static audit above still ran)`
     );

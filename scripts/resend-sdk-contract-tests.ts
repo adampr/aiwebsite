@@ -21,6 +21,7 @@
  * dot-segment refusal cases added by the 2026-10-19 round 2 (6.34.1), and
  * their backslash / whitespace spellings by the 2026-11-15 round (6.38.1).
  */
+import { summaryGuard } from "./lib/summary-guard";
 import { isDeepStrictEqual } from "node:util";
 import { Resend } from "resend";
 
@@ -111,8 +112,11 @@ async function main() {
     globalThis.fetch = realFetch;
     console.error = realError;
   }
+  guard.reached();
   console.log(failures ? `\n${failures} FAILED` : "\nall resend SDK contract checks passed");
   process.exit(failures ? 1 : 0);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("resend sdk contract");
 main().catch((e) => { console.error(e); process.exit(1); });

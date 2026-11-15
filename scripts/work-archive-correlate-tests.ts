@@ -6,6 +6,7 @@
 // (which must stay a question: it never becomes a verdict and never moves
 // an exit code). Run: npm run test:correlate (tsx, no DB, no brain).
 
+import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -597,9 +598,12 @@ async function main() {
     "the Summary names the only thing that settles it"
   );
 
+  guard.reached();
   console.log("work-archive-correlate-tests: all assertions passed.");
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("work-archive-correlate-tests");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -7,6 +7,7 @@
 // The release each case belongs to is named in the case title; the module's
 // MIGRATIONS.md entry for that release is the contract being pinned.
 
+import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 
@@ -179,9 +180,12 @@ async function main() {
     }
   });
 
+  guard.reached();
   console.log(`\n${passed} passed`);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("aicompany-upgrade-contract-tests");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

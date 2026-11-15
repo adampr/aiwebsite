@@ -68,6 +68,7 @@
  *     renderers returned
  */
 
+import { summaryGuard } from "./lib/summary-guard";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -1973,10 +1974,13 @@ async function main() {
     );
   }
 
+  guard.reached();
   console.log(failures === 0 ? "\nALL COVER/LETTER RENDER TESTS PASSED" : `\n*** ${failures} FAILURE(S) ***`);
   process.exit(failures === 0 ? 0 : 1);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("rfp cover/letter render");
 main().catch((err) => {
   console.error(err);
   process.exit(1);

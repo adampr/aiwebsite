@@ -22,6 +22,7 @@
 //
 // NO EM DASHES in any of the three files, asserted below (site rule).
 
+import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -528,7 +529,7 @@ function main(): void {
   // Blob (BlobPart concatenation, so a 100 MB package is never copied into a
   // second in-memory buffer; refuter finding 2026-09-01) and Blob reads are
   // async. The block still fails the suite: its catch exits 1.
-  void (async () => {
+  void guard.track("raw-transport codec + reader block", (async () => {
     const toBytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());
     {
       // Round-trip fidelity, the full create shape: every field, package AND
@@ -693,7 +694,7 @@ function main(): void {
     console.log(
       "work-submit-tests: raw-transport codec + reader assertions passed."
     );
-  })().catch((e) => {
+  })()).catch((e) => {
     console.error(e);
     process.exit(1);
   });
@@ -1147,7 +1148,10 @@ function main(): void {
     );
   }
 
+  guard.reached();
   console.log("work-submit-tests: all assertions passed.");
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("work-submit-tests");
 main();

@@ -24,6 +24,7 @@
  * style-id uniqueness and the default tab stop added 2026-10-24
  * (docx 9.12.0 -> 9.14.0).
  */
+import { summaryGuard } from "./lib/summary-guard";
 import { isDeepStrictEqual } from "node:util";
 import JSZip from "jszip";
 import { AlignmentType, Document, LevelFormat, Packer, Paragraph } from "docx";
@@ -148,10 +149,13 @@ async function main() {
   check("text: no XML-forbidden control character survives in document.xml", /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(cxml), false);
   check("text: the words around them are kept", ["alpha", "beta", "gamma"].every((w) => cxml.includes(w)), true);
 
+  guard.reached();
   console.log(failures === 0 ? "docx numbering contract: all checks passed" : `docx numbering contract: ${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("docx numbering contract");
 main().catch((e) => {
   console.error(e);
   process.exit(1);

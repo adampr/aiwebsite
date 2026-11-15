@@ -17,6 +17,7 @@
  * style-sample.ts's PDF path). Added by the 2026-10-09 dependency-upgrade
  * train (pdfjs-dist 6.1.200 -> 6.4.299, pdfkit 0.19 -> 0.20, docx 9.7 -> 9.9).
  */
+import { summaryGuard } from "./lib/summary-guard";
 import { Document, HeadingLevel, Packer, Paragraph } from "docx";
 import PDFDocument from "pdfkit";
 import { extractStyleSampleText } from "../src/lib/governance/style-sample";
@@ -118,10 +119,13 @@ async function main() {
   process.off("unhandledRejection", onUnhandled);
   ok("hostile pdfs: no unhandled rejection left behind", unhandled === 0, `${unhandled}`);
 
+  guard.reached();
   console.log(failures ? `\n${failures} FAILED` : "\nall style-sample extraction checks passed");
   process.exit(failures ? 1 : 0);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("style-sample extraction");
 main().catch((e) => {
   console.error(e);
   process.exit(1);

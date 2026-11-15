@@ -12,6 +12,7 @@
  * compose order, save-as-you-go, fail-whole and lone-file budget behavior.
  */
 
+import { summaryGuard } from "./lib/summary-guard";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   RFP_INTAKE_ACCEPT,
@@ -577,8 +578,11 @@ async function ioTests() {
   check("partsFromRows names a nameless file 'attachment'", partsFromRows([{ id: "x", ordinal: 0, kind: "file", name: null, media: null, text: "t", bytes: null }]), [{ kind: "file", name: "attachment", text: "t" }]);
 }
 
+// This script cannot exit 0 without reaching its summary (scripts/lib/summary-guard.ts).
+const guard = summaryGuard("rfp vision tests");
 ioTests()
   .then(() => {
+    guard.reached();
     console.log(failures === 0 ? "\nall rfp vision tests passed" : `\n${failures} FAILED`);
     process.exit(failures === 0 ? 0 : 1);
   })
