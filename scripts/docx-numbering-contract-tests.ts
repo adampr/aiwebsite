@@ -136,6 +136,18 @@ async function main() {
   check("settings: default tab stop, if written, is 720 twips", tab === undefined || tab === "720", true);
   console.log(`info styles written: ${styleIds.length}; defaultTabStop ${tab ?? "absent"}`);
 
+  // ── docx 9.15.0 (round of 2026-11-15, 9.14.0 -> 9.15.4) ──
+  // 9.15.0 swaps docx's own zip writer (JSZip -> fflate): every check above
+  // already reads the packer output back through JSZip, as export.ts
+  // embedPlainFonts does. 9.15.0 also strips the control characters XML 1.0
+  // forbids; RFP and governance text arrive from PDF extraction and model
+  // output, where a stray \u000B or \u0001 used to make a document Word
+  // refuses to open. Pinned: none survives, and the text around them does.
+  const cz = await JSZip.loadAsync(await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ text: "alpha\u000Bbeta\u0001gamma" })] }] })));
+  const cxml = (await cz.file("word/document.xml")?.async("string")) ?? "";
+  check("text: no XML-forbidden control character survives in document.xml", /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(cxml), false);
+  check("text: the words around them are kept", ["alpha", "beta", "gamma"].every((w) => cxml.includes(w)), true);
+
   console.log(failures === 0 ? "docx numbering contract: all checks passed" : `docx numbering contract: ${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }

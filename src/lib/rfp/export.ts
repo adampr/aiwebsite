@@ -2204,8 +2204,9 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
  * faces for the plain-TTF one) only honors UNobfuscated embedded fonts —
  * the same form LibreOffice's own .docx export writes, which Word opens
  * fine. application/x-font-ttf is one of ECMA-376's listed font part
- * content types, so the swapped package stays valid. jszip is docx's own
- * dependency; no new package.
+ * content types, so the swapped package stays valid. jszip is this site's
+ * own dependency (docx 9.15 writes its zip with fflate, no longer jszip); no
+ * new package.
  */
 async function embedPlainFonts(
   packed: Buffer,
