@@ -84,6 +84,18 @@ async function mkRow(over: Record<string, unknown> = {}) {
 }
 
 async function main() {
+  // A REAL-database exercise (header): without DATABASE_URL there is nothing
+  // to exercise, and it used to die in cleanup() on "DATABASE_URL environment
+  // variable is not set", a red that said nothing about the state machine.
+  // Skip VISIBLY, by name and reason, with exit 0: the gate counts it as
+  // skipped, never as passed. On the dev box's primary checkout governance-env
+  // loads the .env, DATABASE_URL is set, and the whole flow runs as before.
+  if (!process.env.DATABASE_URL) {
+    console.log(
+      "SKIPPED test:workupdate: needs DATABASE_URL (a real Postgres with migration 0033; it writes and deletes ZZTEST rows); none is set here, so nothing ran"
+    );
+    process.exit(0);
+  }
   await cleanup();
 
   // 1. A published parent.

@@ -201,6 +201,20 @@ import type {
 } from "../src/lib/governance/types";
 import { REPO_ROOT } from "./lib/governance-env";
 
+// This suite is DB-free: section 32 renders the admin queries with .toSQL()
+// and never runs one. The module's lazy `db` proxy still demands a
+// DATABASE_URL before it will build a query, so without the dev box's .env
+// (a worktree, CI) the run died there on "DATABASE_URL environment variable is
+// not set" with every later section unchecked. Where none is set, give it an
+// address that can never answer (port 9, the discard port, on loopback): the
+// query builders need the string, and any section that ever tried to RUN a
+// query would fail loudly with a refused connection instead of passing. The
+// .env value, when there is one, still wins (governance-env runs first).
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = "postgres://governance-tests-tosql-only@127.0.0.1:9/never-connected";
+  console.log("note DATABASE_URL unset: using a never-connecting placeholder (the suite only renders SQL)");
+}
+
 let failures = 0;
 function check(name: string, cond: boolean): void {
   if (cond) console.log(`ok   ${name}`);
