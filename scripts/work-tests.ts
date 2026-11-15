@@ -3702,8 +3702,13 @@ async function main() {
     const touches = [...vm.matchAll(/^\s*.*sudo touch "\$deploy_marker".*$/gm)];
     const lastTouch = touches[touches.length - 1];
     assert.ok(touches.length >= 2, "setup-vm.sh touches the deploy marker");
-    const reloadAt = vm.indexOf("pm2 startOrReload");
-    const cutoverAt = vm.indexOf('stage-build.sh cutover');
+    // The COMMAND lines, anchored at a line start: a template comment that
+    // names `pm2 startOrReload` before the cutover (setup-vm.sh's loopback
+    // preload note, rendered since module v1.174.0, d6a44f43 2026-10-26) made
+    // indexOf find the comment, and this arm read red from then on with the
+    // real order intact (fixed 2026-11-15).
+    const reloadAt = vm.search(/^pm2 startOrReload /m);
+    const cutoverAt = vm.search(/^bash deploy\/stage-build\.sh cutover\b/m);
     const removeAt = vm.indexOf('sudo rm -f "$deploy_marker"');
     assert.ok(reloadAt > 0 && cutoverAt > 0 && removeAt > 0, "cutover landmarks present");
     assert.ok(
