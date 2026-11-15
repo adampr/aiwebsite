@@ -94,6 +94,30 @@ async function main() {
   const junk = await extractStyleSampleText("junk.pdf", Buffer.from("this is not a pdf at all"));
   ok("junk .pdf: refused, not thrown", junk.ok === false, JSON.stringify(junk));
 
+  // Hostile-input shapes a visitor's upload can take (pdfjs-dist 6.4.299 ->
+  // 6.5.438 round, 2026-11-15: 6.5 bounds several parsers against hostile
+  // PDFs and fixes unhandled rejections). The site relies on: a broken PDF
+  // comes back as an answer (never a throw), inside the extractor's own
+  // deadline, and leaves no unhandled rejection behind.
+  let unhandled = 0;
+  const onUnhandled = () => { unhandled++; };
+  process.on("unhandledRejection", onUnhandled);
+  for (const [label, buf] of [
+    ["a real PDF cut to its first 60%", pdf.subarray(0, Math.floor(pdf.length * 0.6))],
+    ["a PDF header followed by 4 KiB of junk", Buffer.from("%PDF-1.7\n" + "x".repeat(4096), "latin1")],
+  ] as const) {
+    const t0 = Date.now();
+    const bad = await extractStyleSampleText("hostile.pdf", buf);
+    const ms = Date.now() - t0;
+    // A truncated file may still be recovered (pdf.js rebuilds a lost xref);
+    // what matters is an answer, not a throw.
+    ok(`hostile pdf (${label}): an answer (text or a refusal), not a throw`, typeof bad.ok === "boolean", JSON.stringify(bad).slice(0, 300));
+    ok(`hostile pdf (${label}): answered within the 10 s extraction deadline (+1 s)`, ms <= 11_000, `${ms} ms`);
+  }
+  await new Promise((r) => setTimeout(r, 50));
+  process.off("unhandledRejection", onUnhandled);
+  ok("hostile pdfs: no unhandled rejection left behind", unhandled === 0, `${unhandled}`);
+
   console.log(failures ? `\n${failures} FAILED` : "\nall style-sample extraction checks passed");
   process.exit(failures ? 1 : 0);
 }
