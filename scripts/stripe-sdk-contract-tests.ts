@@ -13,7 +13,9 @@
  * The create params below are the route's, built from the same OFFERINGS
  * entry, for both the inline price_data path and the STRIPE_PRICE_COHORT
  * override path. Added by the 2026-10-09 dependency-upgrade train
- * (stripe 22.3.1 -> 23.0.0: API version 2026-06-24.dahlia -> 2026-09-30.endive).
+ * (stripe 22.3.1 -> 23.0.0: API version 2026-06-24.dahlia -> 2026-09-30.endive);
+ * re-run by the 2026-11-15 round (23.0.1 -> 23.1.0: 2026-09-30.endive ->
+ * 2026-10-28.endive, which Stripe marks non-breaking).
  */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
