@@ -114,6 +114,33 @@ async function main() {
     check("413: maps to too_large", big, { ok: false, reason: "too_large" });
     check("413: not retried", calls.length, 1);
     check("413: the log line names status and request id only", warns.at(-1), "[rfp] vision transcription failed: too_large status 413 request req_413");
+
+    // 1.5.0 (@anthropic-ai/sdk 1.3.0 -> 1.8.0 round, 2026-11-15) adds one error
+    // class per HTTP status and error code, every one a subclass of APIError;
+    // 1.6.0 sets each error's `name` to its class. visionErrorReason maps by
+    // `instanceof` and never reads `name`: an overloaded 529 must still read as
+    // api_error, after the SDK's own retries (retry-after-ms 0 keeps it fast).
+    calls = [];
+    respond = () => new Response(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "busy" } }), { status: 529, headers: { "content-type": "application/json", "request-id": "req_529", "retry-after-ms": "0" } });
+    const busy = await extractVisionText({ name: "x.pdf", buf: pdf, mediaType: "application/pdf", budgetMs: 60_000, maxChars: 10_000 });
+    check("529: maps to api_error (an APIError subclass, read by instanceof)", busy, { ok: false, reason: "api_error" });
+    check("529: the SDK's default retries ran (1 + 2 attempts)", calls.length, 3);
+    check("529: the log line names status and request id only", warns.at(-1), "[rfp] vision transcription failed: api_error status 529 request req_529");
+
+    // The budget runs out before the first byte: the abort maps to timeout.
+    calls = [];
+    respond = () => new Response(new ReadableStream({ start() {} }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        calls.push({ url: String(input instanceof Request ? input.url : input), method: (init?.method ?? "GET").toUpperCase(), headers: {}, body: {} });
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+      })) as typeof fetch;
+    const slow = await extractVisionText({ name: "x.pdf", buf: pdf, mediaType: "application/pdf", budgetMs: 50, maxChars: 10_000 });
+    globalThis.fetch = realFetch;
+    check("budget exhausted before the first byte: maps to timeout", slow, { ok: false, reason: "timeout" });
+    console.log(`info timeout warn lines: ${JSON.stringify(warns.slice(-3))}`);
+    check("timeout: a log line names the reason", warns.some((w) => /^\[rfp\] vision transcription failed: timeout\b/.test(w)), true);
   } finally {
     console.warn = realWarn;
   }
