@@ -70,10 +70,15 @@ export function MobileNav({ children }: { children?: React.ReactNode }) {
   // App Router keeps the layout mounted across a <Link> navigation, so
   // unlike a full-page-load menu this panel would still be open on the next
   // page. Close on every path change — this also covers back/forward and a
-  // tap on the destination the visitor is already on.
-  useEffect(() => {
+  // tap on the destination the visitor is already on. Done while rendering
+  // (React's "adjust state when a prop changes" pattern: remember the path
+  // this render saw), not in an effect: an effect painted the stale open
+  // panel first and then rendered again (react-hooks/set-state-in-effect).
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
     setOpen(false);
-  }, [pathname]);
+  }
 
   // Crossing the breakpoint while open (rotation to landscape) would leave
   // `open` latched: nothing renders above the boundary, but the invisible

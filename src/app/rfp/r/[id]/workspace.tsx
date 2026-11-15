@@ -865,8 +865,10 @@ export function Workspace({
   // label (replaying the wash) — never when the 15s expiry clears the
   // highlight set. Keying off the highlight itself made expiry remount the
   // section, which detached a focused edit textarea mid-sentence and reset
-  // the pricing table's horizontal scroll.
-  const flashSeq = useRef(new Map<string, number>());
+  // the pricing table's horizontal scroll. State, not a ref: the keys read it
+  // during render (react-hooks/refs), and it changes in the same batched
+  // update as the highlight set, so a key still moves only on a new flash.
+  const [flashSeq, setFlashSeq] = useState<ReadonlyMap<string, number>>(() => new Map());
   const flashCounter = useRef(0);
 
   // ---- draft-all run state ----
@@ -1466,7 +1468,12 @@ export function Workspace({
       // the latest change, which is what "just now" means.
       setHighlights((prev) => new Set([...prev, ...labels]));
       flashCounter.current += 1;
-      for (const l of labels) flashSeq.current.set(l, flashCounter.current);
+      const seq = flashCounter.current;
+      setFlashSeq((prev) => {
+        const next = new Map(prev);
+        for (const l of labels) next.set(l, seq);
+        return next;
+      });
       if (highlightTimer.current !== null)
         window.clearTimeout(highlightTimer.current);
       highlightTimer.current = window.setTimeout(() => {
@@ -3630,6 +3637,12 @@ export function Workspace({
       consolRun !== null
     )
       return;
+    // The rule is right in general (state derived in an effect costs a second
+    // render) and wrong here: this is not derived state but the one-shot
+    // consumption of an event that must wait for COMMITTED state (see the
+    // flag's comment at its useState); clearing it in the event handler is
+    // what the stale-closure race above rules out.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- consumes a one-shot handoff flag once committed state clears the guard (2026-11-15)
     setConsolAutoPending(false);
     void consolidateAll(true);
   });
@@ -5379,7 +5392,7 @@ export function Workspace({
                       ? "doc-sec--changed doc-sec--flash"
                       : undefined
                   }
-                  key={`c-${flashSeq.current.get(LETTER_LABEL) ?? 0}`}
+                  key={`c-${flashSeq.get(LETTER_LABEL) ?? 0}`}
                 >
                   <div className="rfpdoc-pagehead">
                     <img
@@ -5800,7 +5813,7 @@ export function Workspace({
                             ? "doc-sec--changed doc-sec--flash"
                             : undefined
                         }
-                        key={`c-${flashSeq.current.get("__pricing") ?? 0}`}
+                        key={`c-${flashSeq.get("__pricing") ?? 0}`}
                       >
                       <div className="rfpdoc-sechead">
                         <div className="min-w-0">
@@ -6042,7 +6055,7 @@ export function Workspace({
                     className={
                       changed ? "doc-sec--changed doc-sec--flash" : undefined
                     }
-                    key={`c-${flashSeq.current.get(node.label) ?? 0}`}
+                    key={`c-${flashSeq.get(node.label) ?? 0}`}
                   >
                     <div className="rfpdoc-sechead">
                       <div className="min-w-0">
