@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// aicompany-template: pm2-drift-check.cjs.tpl@f730fa41850ac36f359d5694de1e0c07e5139be6b9702cbfbc5a0c5b0382079b
+// aicompany-template: pm2-drift-check.cjs.tpl@0ec4c207805a6c341aca51087429f487b3362042a5082807c2a5c117db1b8628
+/* eslint-disable @typescript-eslint/no-require-imports */
 // aiwebsite pm2 drift check (v1.175.0, architecture.md §9.10; S12 P1 / refuter 2S2).
 // READ-ONLY. Prints NAMES only — never an env value.
 //

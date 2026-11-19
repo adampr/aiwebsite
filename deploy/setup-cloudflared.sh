@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-cloudflared.sh.tpl@d2fbb4789b769e717f2d4c566a54930f8903c3f965f09a1f4d13018a9a3082ad
+# aicompany-template: setup-cloudflared.sh.tpl@36d8f627d003a87c0fa5a50535ff7819b86bcd2da42fc776c0222035eeb4113c
 #
 # Install and configure the Cloudflare tunnel for ai.xl.net.
 #
@@ -76,7 +76,7 @@ else
     if [ ! -f "$cred_dir/cert.pem" ]; then
         cloudflared tunnel login
     fi
-    if cloudflared tunnel list | grep -q "$tunnel_name"; then
+    if grep -q "$tunnel_name" <<<"$(cloudflared tunnel list)"; then
         tunnel_id=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name==\"$tunnel_name\") | .id")
     else
         cloudflared tunnel create "$tunnel_name"

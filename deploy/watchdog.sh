@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@6bc5fcfb03c97b4698d9364bce0cae4410de7b9ff3212ae8067c938db1c1fd6c
+# aicompany-template: watchdog.sh.tpl@bf1d4d26ca6505d549b325716d591e057ac35bce16259fe93334258dc19c7a04
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -54,6 +54,7 @@ pid_file="/var/run/aiwebsite-watchdog.pid"
 lock_file="/var/run/aiwebsite-watchdog.lock"
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
 deploy_grace_seconds=1800     # defer repair ACTIONS while the deploy marker is fresher than this (§9.5)
+deploy_restart_grace_seconds=300 # v1.177.0: a local-artifact page pass this soon after the marker's last WRITE is recorded, not mailed (one page-pass interval; see deploy_marker_just_written)
 # v1.130.0: open local-artifact page CRITICAL + its consecutive-green counter
 # (tmpfs, beside the marker: a reboot drops it and the row stays open for a
 # human, the same rule as the deploy-defer stamps). See note_page_green.
@@ -143,6 +144,27 @@ deploy_in_progress() {
 # [d] bracket keeps the pattern from matching a shell that merely quotes it.
 deploy_pipeline_running() {
   pgrep -f '[d]eploy/setup-vm\.sh' >/dev/null 2>&1
+}
+
+# v1.177.0: was the marker WRITTEN within the last $deploy_restart_grace_seconds?
+# A host's deploy wrapper may restart the app before deploy.sh runs at all
+# (the two GCP hosts' memory reclaim: the wrapper writes the marker, then
+# `pm2 restart all`). No setup-vm.sh exists yet, so deploy_pipeline_running is
+# false while the pages are down for the minute a restart takes, and a page
+# pass landing there mailed a CRITICAL inside a planned deploy (about 1 in 10
+# untimed deploys, 2026-11). One page-pass interval after the marker's last
+# write covers that restart and nothing longer: page passes run 5 minutes
+# apart, so each WRITE of the marker can silence at most one of them, and a
+# deploy that dies and leaves its marker behind is loud again within 5 minutes
+# of its last write — the RA 2026-09-16 objection to honouring the marker
+# alone was its 30 minutes, not its first five. A marker dated in the FUTURE
+# (a stepped clock) is not "just written": it would otherwise defer until the
+# clock caught up.
+deploy_marker_just_written() {
+  local marker_mtime age
+  marker_mtime=$(stat -c %Y "$deploy_marker" 2>/dev/null) || return 1
+  age=$(( $(date +%s) - marker_mtime ))
+  (( age >= 0 && age < deploy_restart_grace_seconds ))
 }
 
 load_resend_key() {
@@ -592,7 +614,7 @@ check_pages() {
   # (the main loop's service checks will handle that)
   local hc
   hc=$(curl -sf -m 5 "$site_health_url" 2>&1) || hc=""
-  if [[ -z "$hc" ]] || ! echo "$hc" | grep -q '"status":"ok"'; then
+  if [[ -z "$hc" ]] || ! grep -q '"status":"ok"' <<<"$hc"; then
     log "INFO: Skipping page checks -- health endpoint down"
     # A health-down pass is not green: it breaks the v1.130.0 streak too.
     if [ -e "$page_alarm_stamp" ]; then echo 0 > "$page_alarm_stamp" 2>/dev/null || true; fi
@@ -604,7 +626,7 @@ check_pages() {
     http_code=$(curl -s -o /tmp/aiwebsite-watchdog-page-body -w '%{http_code}' -m 15 "$url" 2>/dev/null) || http_code="000"
     body=$(cat /tmp/aiwebsite-watchdog-page-body 2>/dev/null) || body=""
 
-    if [[ "$http_code" -ge 500 ]] || echo "$body" | grep -qi "application error\|internal server error\|NEXT_NOT_FOUND"; then
+    if [[ "$http_code" -ge 500 ]] || grep -qi "application error\|internal server error\|NEXT_NOT_FOUND" <<<"$body"; then
       log "FAIL: Page check $url returned HTTP $http_code"
       any_page_fail=true
       failed_urls+=("$url (HTTP $http_code)")
@@ -636,7 +658,27 @@ check_pages() {
       # fresh marker AND a running setup-vm.sh (RA 2026-09-16), so a deploy
       # still in its dev-box sync/ship phase, or one that crashed and left a
       # fresh marker, gets the loud path below.
-      if deploy_in_progress && deploy_pipeline_running; then
+      # v1.177.0: OR the marker was written under $deploy_restart_grace_seconds
+      # ago — a wrapper's pre-deploy restart, before any setup-vm.sh exists.
+      # The pgrep is asked first and its answer decides the wording.
+      local defer_why=""
+      if deploy_in_progress; then
+        if deploy_pipeline_running; then
+          defer_why="setup-vm"
+        elif deploy_marker_just_written; then
+          defer_why="marker-just-written"
+        fi
+      fi
+      if [[ "$defer_why" == "marker-just-written" ]]; then
+        log "DEFER: pages failing ${deploy_restart_grace_seconds}s or less after the deploy marker was written (no setup-vm.sh yet: a wrapper's pre-deploy restart) — local-artifact host: recorded, not emailed, no rebuild owed; loud again ${deploy_restart_grace_seconds}s after the marker's last write"
+        mark_deploy_defer "page-render-local-artifact-deploy-defer"
+        record_issue \
+          "WARN Page errors just after a deploy marker was written — local-artifact host (recorded, not emailed)" \
+          "Pages returning errors:\n$detail_list\n\n$deploy_marker was written less than ${deploy_restart_grace_seconds}s ago and no deploy/setup-vm.sh process is running: this is the window in which a host's deploy wrapper restarts the app before deploy.sh starts (v1.177.0). Not emailed by policy (v1.102.0): deploys are session-driven and the deploying terminal owns this window. The deferral ends ${deploy_restart_grace_seconds}s after the marker's last write: a page pass that still fails after that, with no setup-vm.sh running, mails the CRITICAL as before. This host is DEPLOY_BUILD_MODE=local-artifact, so no VM rebuild is owed or attempted." \
+          "page-render-local-artifact-deploy-defer" 0
+        return
+      fi
+      if [[ "$defer_why" == "setup-vm" ]]; then
         log "DEFER: pages failing while setup-vm.sh runs (marker <${deploy_grace_seconds}s) — local-artifact host: recorded, not emailed, no rebuild owed"
         # Stamp BEFORE the record (the v1.52 bug direction), as restart_and_alert does.
         mark_deploy_defer "page-render-local-artifact-deploy-defer"
@@ -734,7 +776,7 @@ check_synth_pages() {
   [ -n "$synth_pages" ] || return 0
   local hc
   hc=$(curl -sf -m 5 "$site_health_url" 2>&1) || hc=""
-  if [[ -z "$hc" ]] || ! echo "$hc" | grep -q '"status":"ok"'; then
+  if [[ -z "$hc" ]] || ! grep -q '"status":"ok"' <<<"$hc"; then
     return 0   # total-down belongs to the main-loop service checks
   fi
   if deploy_in_progress; then
@@ -1165,7 +1207,7 @@ while true; do
 
   # 4. brain-api (:3211) -- /health is unauthenticated even in fail-closed mode
   brain_response=$(curl -sf -m 10 "$brain_health_url" 2>&1) || brain_response=""
-  if [[ -z "$brain_response" ]] || ! echo "$brain_response" | grep -q '"ok":true'; then
+  if [[ -z "$brain_response" ]] || ! grep -q '"ok":true' <<<"$brain_response"; then
     log "FAIL: brain-api health check failed: $brain_response"
     any_failure=true
     restart_and_alert "$svc_brain" \
@@ -1178,7 +1220,7 @@ while true; do
 
   # 5. skills-host (:3213)
   skills_response=$(curl -sf -m 10 "$skills_health_url" 2>&1) || skills_response=""
-  if [[ -z "$skills_response" ]] || ! echo "$skills_response" | grep -q '"ok":true'; then
+  if [[ -z "$skills_response" ]] || ! grep -q '"ok":true' <<<"$skills_response"; then
     log "FAIL: skills-host health check failed: $skills_response"
     any_failure=true
     restart_and_alert "$svc_skills" \
@@ -1192,7 +1234,7 @@ while true; do
   # 6. Next.js site (:3000) -- check last since it depends on postgres + brain
   site_healthy=false
   site_response=$(curl -sf -m 10 "$site_health_url" 2>&1) || site_response=""
-  if [[ -z "$site_response" ]] || ! echo "$site_response" | grep -q '"status":"ok"'; then
+  if [[ -z "$site_response" ]] || ! grep -q '"status":"ok"' <<<"$site_response"; then
     log "FAIL: site health check failed: $site_response"
     any_failure=true
 
@@ -1256,7 +1298,7 @@ while true; do
   fi
   earlyoom_window=$(journalctl -u earlyoom --since "@${last_scan}" --no-pager 2>/dev/null || true)
   earlyoom_kills=$(printf '%s' "$earlyoom_window" | grep -aE 'sending SIG(TERM|KILL) to (process|pid) [0-9]+|[Kk]illing process [0-9]+' || true)
-  if printf '%s' "$earlyoom_window" | grep -aq 'sending SIGTERM when'; then
+  if grep -aq 'sending SIGTERM when' <<<"$earlyoom_window"; then
     # Banner = unit (re)start — routine during deploys; log-only, never mail.
     log "INFO: earlyoom (re)started in this window"
   fi
@@ -1272,11 +1314,11 @@ while true; do
     # v1.161.0: a kill whose EVERY victim is a headless browser is earlyoom
     # doing what --prefer asked (the collectors' Chromium goes first, the site
     # survives) — WARN, not CRITICAL. A mixed list stays CRITICAL.
-    if ! printf '%s' "$earlyoom_kills" | grep -aqvE '"(chrome|chromium|headless_shell)[^"]*"'; then
+    if ! grep -aqvE '"(chrome|chromium|headless_shell)[^"]*"' <<<"$earlyoom_kills"; then
       kill_sev="WARN (headless browser victim)"
     fi
     if [[ -f "$marker" ]] && (( now_ts - $(stat -c %Y "$marker" 2>/dev/null || echo 0) < 1800 )); then
-      if ! printf '%s' "$earlyoom_kills" | grep -aqvE '"(npm|node|next-server|tsx|npx)[^"]*"'; then
+      if ! grep -aqvE '"(npm|node|next-server|tsx|npx)[^"]*"' <<<"$earlyoom_kills"; then
         kill_sev="WARN (deploy window)"
       fi
     fi

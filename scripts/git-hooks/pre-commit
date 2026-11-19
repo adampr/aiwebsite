@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: pre-commit.tpl@acfa536a20940981bf4db1ee6f49d5437b68959010bb48f23714b48d5b4bf8f5
+# aicompany-template: pre-commit.tpl@70b34f4f836dbbbfc0dc52ffc629df87eae8e6166cad95f337fa47520a9e3312
 # pre-commit: architecture-doc sync gate (@aicompany/core template, §16 v1.6).
 #
 # Blocks commits that touch code paths without also staging the host's
@@ -27,8 +27,8 @@ code_pattern='^(src|drizzle|deploy|packages)/|^site\.config\.ts$|^instrumentatio
 
 staged=$(git diff --cached --name-only | grep -v '^scripts/git-hooks/')
 
-printf '%s\n' "$staged" | grep -qE "$code_pattern" || exit 0
-printf '%s\n' "$staged" | grep -qE "$doc_pattern" && exit 0
+grep -qE "$code_pattern" <<<"$staged" || exit 0
+grep -qE "$doc_pattern" <<<"$staged" && exit 0
 
 cat >&2 <<MSG
 

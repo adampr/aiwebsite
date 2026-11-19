@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@0f4771ff09b7c6097719cff88674a43e1d5442d508bc35464ec689cf7b6b82f7
+# aicompany-template: deploy.sh.tpl@11fbf19e0ce23261c7d43a3fa5c65687e2dc46556147a7e7ac8aa365ac4752a9
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -419,6 +419,13 @@ rsync_excludes=(
   --include .env.example --exclude .env --exclude ".env.*" --exclude /data/
   --exclude packages/brain/node_modules
   --exclude packages/brain/scripts/benchmark/cache
+  # v1.178.0 (owner 2026-11-17, "Stop copying the tooling"): the Brain's
+  # bundled evaluation framework (vendor/promptfoo, 234 MB with its docs site)
+  # is read by nothing on a server: not one of the Brain's npm workspaces, no
+  # runtime code names it. Unanchored, so it matches at any depth: roleplay
+  # ships a second Brain copy under vendor/brain-sdk. setup-vm removes the
+  # copies earlier deploys left (an excluded path is never --delete'd).
+  --exclude vendor/promptfoo
   # Staged-deploy artifacts (v1.13.0): the VM-side rollback (.old) and
   # candidate (.new) generations must survive rsync --delete. Unanchored
   # basename patterns also cover packages/brain/node_modules.old and any
@@ -450,6 +457,9 @@ tar_excludes=(
   --exclude ./.env --exclude "./.env.*" --exclude "*/.env" --exclude "*/.env.*"
   --exclude ./data
   --exclude "./packages/brain/scripts/benchmark/cache"
+  # v1.178.0: the Brain's bundled evaluation framework, at any depth (see the
+  # rsync list above).
+  --exclude "*/vendor/promptfoo"
 )
 
 # Host-owned exclude list (v1.4.0): deploy/rsync-excludes.txt patterns (one
@@ -484,6 +494,8 @@ artifact_tmp=""
 env_ship_dir=""   # v1.117.0: the 0600 .env.next copy, reaped by the EXIT trap above
 local_build_id=""
 local_node_major=""
+next_stop_ids=""       # v1.176.2, v1.177.0: advisories a retried build was allowed past (empty: no stop met)
+next_stop_version=""
 if [ "$build_mode" = "local-artifact" ]; then
   echo ">>> Local artifact build (DEPLOY_BUILD_MODE=local-artifact — the VM never builds)..."
   local_node_major="$(node -v | sed 's/^v//' | cut -d. -f1)"
@@ -544,7 +556,101 @@ if [ "$build_mode" = "local-artifact" ]; then
     fi
   done
   echo ">>> next build (dev box, heap 8192MB)..."
-  (cd "$repo_dir" && env NODE_OPTIONS=--max-old-space-size=8192 npm run build)
+  # >>> next-security-stop
+  # ── The Next.js security stop (v1.176.2 and v1.177.0; owner's ruling 2026-11-17) ──
+  # From next 16.4 on, `next build` STARTED BY A CODING AGENT on a version
+  # with a known advisory exits 1 ("SecurityFatalError: Your version of
+  # Next.js is affected by a known security vulnerability … Retry the same
+  # command to continue") and lets the same command through when it is retried
+  # within five minutes; the receipt for that lives in .next/cache. Every host
+  # builds here on the dev box, where the deployer is an agent session, so a
+  # host that is HELD on such a version could not be deployed at all, and could
+  # not be rolled back to one either (itsupportchicago, 2026-11-17 12:10 PM
+  # CST: stopped after the wrapper's restart, nothing synced).
+  #
+  # The owner's ruling ("Show notice, retry once"): the deploy shows the
+  # notice and retries the build. It is kept as narrow as the stop is wide:
+  #   - only this stop (both of its sentences, verbatim, in the build's own
+  #     output); every other build failure fails the deploy as before;
+  #   - only when scripts/next-advisory-check.mjs answers CHECKED: every
+  #     advisory the npm registry reports for the installed next is on this
+  #     host's COMMITTED list deploy/next-advisories-checked.json (id, the day
+  #     it was checked, by whom, why the site is not exposed, how that was
+  #     established). A new advisory, a list entry without a reason, or a
+  #     registry that cannot be read refuses, with the VM untouched;
+  #   - once. A second retry is made in exactly one case: the first build ran
+  #     so long that its receipt (counted from the START of the stopped build)
+  #     had expired before the retry began, so the retry was stopped too and
+  #     wrote a fresh one. Never a third;
+  #   - .next is NOT cleared between attempts (the receipt is in it; the cache
+  #     beside it is seconds old and from this same tree);
+  #   - the notice and the advisory ids are printed here, again in the last
+  #     lines of the deploy, and setup-vm files them in the issue ledger.
+  # It is not a way to stay on an old Next.js: the notice's own recommendation
+  # is printed every time, and the ledger row stays open until a deploy builds
+  # without meeting the stop.
+  build_log="$(mktemp)"
+  build_attempt=0
+  first_build_took=0
+  while :; do
+    build_attempt=$((build_attempt + 1))
+    build_started=$(date +%s)
+    build_rc=0
+    (cd "$repo_dir" && env NODE_OPTIONS=--max-old-space-size=8192 npm run build) 2>&1 | tee "$build_log" || build_rc=$?
+    build_took=$(( $(date +%s) - build_started ))
+    if [ "$build_rc" = 0 ]; then break; fi
+    if ! grep -q -F 'SecurityFatalError' "$build_log" || ! grep -q -F 'Retry the same command to continue' "$build_log"; then
+      rm -f "$build_log"
+      exit "$build_rc"
+    fi
+    if [ "$build_attempt" = 1 ]; then
+      first_build_took=$build_took
+      adv_rc=0
+      # `env -u`: the checker's registry address can be overridden by a variable
+      # that exists for its tests; a deploy always asks the real registry.
+      adv_out="$(env -u AICOMPANY_NPM_ADVISORIES_URL node "$module_dir/scripts/next-advisory-check.mjs" --repo "$repo_dir" 2>&1)" || adv_rc=$?
+      adv_line="$(head -n 1 <<<"$adv_out")"
+      if [ "$adv_rc" != 0 ]; then
+        echo ""
+        echo "ERROR: the build was stopped by the Next.js security notice, and this deploy may not retry it:"
+        sed 's/^/  /' <<<"$adv_out"
+        echo "  A retry is allowed only when every advisory the npm registry reports for the installed next is on this"
+        echo "  host's committed list deploy/next-advisories-checked.json (id, checkedOn, by, reason, how)."
+        echo "  Either upgrade next (the framework's own recommendation), or check this site against the advisories"
+        echo "  named above, add each to the list with its reason, commit, and deploy again. This script has not touched the VM."
+        rm -f "$build_log"
+        exit 1
+      fi
+      # The version and the ids travel on the VM's command line below, so the
+      # whole line must have exactly this shape before either is used.
+      adv_re='^CHECKED ([0-9][0-9A-Za-z.+-]*) (GHSA(-[0-9a-z]{4}){3}(,GHSA(-[0-9a-z]{4}){3})*)$'
+      if [[ "$adv_line" =~ $adv_re ]]; then
+        next_stop_version="${BASH_REMATCH[1]}"
+        next_stop_ids="${BASH_REMATCH[2]}"
+      else
+        echo "ERROR: unexpected answer from next-advisory-check: $adv_line"
+        rm -f "$build_log"
+        exit 1
+      fi
+      echo ""
+      echo ">>> NEXT.JS SECURITY NOTICE (the build above stopped to show it): next $next_stop_version has known advisories: $next_stop_ids"
+      echo ">>>   Next.js: \"We strongly recommend you upgrade Next.js.\" Report this to the owner."
+      echo ">>>   Each advisory is on deploy/next-advisories-checked.json, so the build is retried ONCE (owner's ruling 2026-11-17)."
+      continue
+    fi
+    if [ "$build_attempt" = 2 ] && [ "$first_build_took" -ge 240 ]; then
+      echo ">>> the retry was stopped too: the first build ran ${first_build_took}s, and the notice counts its five minutes from the START of the stopped build. One more attempt, inside the fresh window."
+      continue
+    fi
+    echo "ERROR: the build was stopped by the Next.js security notice again after the retry (attempt $build_attempt). Not retrying further."
+    rm -f "$build_log"
+    exit 1
+  done
+  rm -f "$build_log"
+  if [ -n "$next_stop_ids" ]; then
+    echo ">>> build continued past the Next.js security notice on attempt $build_attempt (next $next_stop_version; advisories checked for this site: $next_stop_ids)"
+  fi
+  # <<< next-security-stop
   for f in $env_local_stash; do
     if [ -f "$f.deploy-shielded" ]; then mv "$f.deploy-shielded" "$f"; fi
   done
@@ -610,7 +716,7 @@ esac
 pf_budget=$REMOTE_TIMEOUT
 preflight_out=$(run_remote "$pf_script" 2>&1) || pf_rc=$?
 REMOTE_TIMEOUT=0
-if ! printf '%s' "$preflight_out" | grep -q 'MEMAVAIL_KB'; then
+if ! grep -q 'MEMAVAIL_KB' <<<"$preflight_out"; then
   echo "ERROR: VM unresponsive — the preflight probe got no answer in ${pf_budget}s (rc=$pf_rc)."
   printf '%s\n' "$preflight_out" | head -5
   echo "       A hung SSH banner plus a public 530 is the livelock/dead-box signature."
@@ -749,7 +855,9 @@ if [ "$build_mode" = "local-artifact" ]; then
   # The expected artifact identity rides the command line (BUILD_ID is
   # base64url-safe): setup-vm hard-fails without it, so a hand-run setup-vm
   # can never silently skip the BUILD_ID/parity gates.
-  run_remote "cd $app_dir && LOCAL_BUILD_ID=$local_build_id LOCAL_NODE_MAJOR=$local_node_major TENANT_GATE_OK=${DEPLOY_TENANT_GATE_OK:-} bash deploy/setup-vm.sh"
+  # NEXT_ADVISORY_* (v1.176.2, v1.177.0): empty unless the build above was retried past
+  # the Next.js security stop; setup-vm files or resolves the ledger row.
+  run_remote "cd $app_dir && LOCAL_BUILD_ID=$local_build_id LOCAL_NODE_MAJOR=$local_node_major NEXT_ADVISORY_IDS=$next_stop_ids NEXT_ADVISORY_VERSION=$next_stop_version TENANT_GATE_OK=${DEPLOY_TENANT_GATE_OK:-} bash deploy/setup-vm.sh"
 else
   run_remote "cd $app_dir && TENANT_GATE_OK=${DEPLOY_TENANT_GATE_OK:-} bash deploy/setup-vm.sh"
 fi
@@ -769,6 +877,12 @@ run_remote "set -o pipefail; curl -fsS http://127.0.0.1:3000/api/health && echo 
 run_remote "cd $app_dir && if [ -f deploy/extra-services.json ]; then bash deploy/extra-services.sh verify; fi"
 echo ""
 echo "=== Deploy complete. Public check: curl -fsS https://ai.xl.net/api/health ==="
+if [ -n "$next_stop_ids" ]; then
+  echo "=== NEXT.JS SECURITY NOTICE: this build ran on next $next_stop_version, which has known advisories ($next_stop_ids)."
+  echo "===   It was retried past the framework's stop because each advisory is on deploy/next-advisories-checked.json."
+  echo "===   Next.js: \"We strongly recommend you upgrade Next.js.\" Report this to the owner. The ledger row"
+  echo "===   module/deploy/next-advisory stays open until a deploy builds without meeting the stop. ==="
+fi
 
 # ── Post-deploy synthetic sweep (§9.8 v1.17.0) — ALERT-ONLY ──────
 # Runs dev-box-side against the PUBLIC domain. --post-deploy gates every

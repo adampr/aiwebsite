@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: extra-services.sh.tpl@d5c5475cd87b5eeac2c6a9d21f628be61fc81a3c4cebfeb4809e711b9197ce34
+# aicompany-template: extra-services.sh.tpl@c05975a0676c71665833454eae3fed802a2787ac07b640546a9ffbfaf8bf3621
 # Extra-services supervision library + CLI for ai.xl.net (§9.5 "Extra
 # services", v1.4.0). Supervises host-declared non-pm2 services (e.g. a legacy
 # voice service) from INSIDE the module watchdog's singleton loop — no second
@@ -138,7 +138,7 @@ es_validate() {
     fi
     # shell-hazard guard: these values are interpolated into a bash -c payload
     for f in cwd start path user logFile; do
-      if echo "$svc" | jq -r --arg f "$f" '.[$f] // ""' | grep -q "[\"'\\\\]"; then
+      if grep -q "[\"'\\\\]" <<<"$(jq -r --arg f "$f" '.[$f] // ""' <<<"$svc")"; then
         echo "extra-services INVALID: services[$i].$f — quotes/backslashes are not allowed"
         return 1
       fi
@@ -315,7 +315,7 @@ es_health_one() { # index
   local i="$1" body
   body=$(curl -sf --max-time 5 "${es_health_urls[$i]}" 2>/dev/null) || return 1
   if [ -n "${es_health_expects[$i]}" ]; then
-    echo "$body" | grep -q -- "${es_health_expects[$i]}" || return 1
+    grep -q -- "${es_health_expects[$i]}" <<<"$body" || return 1
   fi
   return 0
 }

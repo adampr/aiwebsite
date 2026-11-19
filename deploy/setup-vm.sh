@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@5e0bc543d4eafaf9879a9da62fcd9919467acd668fca9fc0651b3f16e6bbed56
+# aicompany-template: setup-vm.sh.tpl@57ff76f14be341f5b1e41b48f319d29b07c7ca8e6d837bf4cfd41a512b1e5bce
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -143,7 +143,7 @@ sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsyn
 
 # 1. swapfile 4G + swappiness=60 (S3: the kernel must be WILLING to swap
 #    anon pages or earlyoom's swap gate never trips)
-if ! sudo swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
+if ! grep -q '^/swapfile$' <<<"$(sudo swapon --show=NAME --noheadings)"; then
   sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
   # NOT `chmod && mkswap && swapon` (v1.64.0): under `set -euo pipefail` an
   # AND-list whose FIRST command fails does not abort, so a failed chmod or
@@ -312,14 +312,44 @@ fi
 sudo systemctl enable --now postgresql
 
 # Create database and user
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='aiwebsite'" | grep -q 1 || \
+grep -q 1 <<<"$(sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='aiwebsite'")" || \
   sudo -u postgres psql -c "CREATE USER \"aiwebsite\" WITH PASSWORD 'aiwebsite';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='aiwebsite'" | grep -q 1 || \
+grep -q 1 <<<"$(sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='aiwebsite'")" || \
   sudo -u postgres createdb -O "aiwebsite" "aiwebsite"
 
 # Bounded WAL so a burst of writes cannot eat the disk (§9.5)
 sudo -u postgres psql -c "ALTER SYSTEM SET max_wal_size = '256MB';" >/dev/null
 sudo systemctl reload postgresql || true
+
+# ── Narration media directory (v1.177.0, §9.1 / §19.33.5) ───────
+# nginx serves narration MP3s from here (the internal location in
+# deploy/nginx.conf); the site writes them. DERIVED data: every file is
+# re-created from blog_audio on the first request for it or by the nightly
+# reconcile, so it is never backed up, never shipped and never touched by a
+# deploy (it is outside /var/www/aiwebsite and /var/www/aiwebsite.stage). Created here, ahead
+# of the nginx section and so outside its baseline branch: it exists before
+# nginx is reloaded and before the cutover starts the new app. Owner = the pm2 user (posture-check's --user
+# rule): the app account while the §9.10 split is active, else this deploy
+# user. The parent `media` is root's, so the app account cannot rename what
+# nginx's alias names. 0755, files 0644: nginx needs search on the directory
+# and read on the files. `install -d` re-applies owner and mode to a directory
+# that already exists and touches none of the files in it.
+# FIVE digits (00755), on purpose. /var/lib/aiwebsite is set-group-ID (2775), a
+# directory made under it inherits that bit from the kernel, and GNU install,
+# like chmod, KEEPS a directory's set-group-ID bit for a numeric mode of four
+# digits or fewer (coreutils manual, "Directories and the Set-User-ID and
+# Set-Group-ID Bits"). `-m 0755` therefore produced 2755 on every host, on the
+# first run and on every later one, and posture assertion 4 (exactly
+# "<user> 755") failed the deploy. A five-digit mode clears the bit on a new
+# directory and on one that already carries it. Found in the release's
+# refutation, 2026-11-17, before any host ran it; the executed test runs the
+# real install under a real 2775 parent.
+media_owner="$(whoami)"
+if [ "$split" = 1 ]; then media_owner="$app_user"; fi
+media_group="$(id -gn "$media_owner")"
+sudo install -d -m 2775 -o root -g "$(whoami)" /var/lib/aiwebsite   # idempotent; the timers block repeats it
+sudo install -d -m 00755 -o root -g root /var/lib/aiwebsite/media
+sudo install -d -m 00755 -o "$media_owner" -g "$media_group" /var/lib/aiwebsite/media/audio
 
 # nginx — loopback-only; the Cloudflare tunnel is the sole public entry
 if ! command -v nginx &>/dev/null; then
@@ -540,7 +570,7 @@ rm -f "$sentinel_flag"
 # A sentinel guarding something that is not running has nothing to protect and can
 # only produce false aborts.
 sentinel_arm=1
-if ! curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
+if ! grep -q '"status":"ok"' <<<"$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null)"; then
   sentinel_arm=0
   echo ">>> liveness sentinel DISARMED: no healthy site on :3000 before staging"
   echo "    (first deploy, or the site is already down — either way there is no"
@@ -554,7 +584,7 @@ deploy_sentinel() {
     ticks=$(( ticks + 1 ))
     if [ "$ticks" -gt 270 ]; then exit 0; fi     # 45-min self-TTL
     body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
-    if printf '%s' "$body" | grep -q '"status":"ok"'; then
+    if grep -q '"status":"ok"' <<<"$body"; then
       misses=0
       continue
     fi
@@ -576,6 +606,33 @@ else
   sentinel_pid=""
   trap 'rm -f "$sentinel_flag"' EXIT
 fi
+
+# >>> brain-tooling-prune
+# ── The Brain's bundled test tooling is not kept on a server (v1.178.0) ──
+# Owner, 2026-11-17: "Stop copying the tooling". vendor/promptfoo (an
+# evaluation framework's whole repository with its docs site, 234 MB per copy;
+# two copies on a host that ships the Brain twice, and the stage tree holds
+# another of each) is read by nothing here: it is not one of the Brain's npm
+# workspaces (apps/*, packages/*) and no runtime code names it (read at Brain
+# v1.194). deploy.sh no longer copies it, but an excluded path is never
+# removed by rsync --delete, so the copies earlier deploys left are removed
+# here, before the staged build reads the live tree. Only a directory named
+# vendor/promptfoo whose own package.json names "promptfoo" is removed; never
+# inside node_modules or its .old/.new generations (the rollback copy stays);
+# at most five levels below the app or stage directory. `find -H` follows the
+# two starting directories if they are links (a host whose app directory is a
+# link is still cleaned) and no link below them. Once removed, nothing brings
+# it back, so later deploys find nothing to do.
+for _pf_root in "$app_dir" "$stage_dir"; do
+  [ -d "$_pf_root" ] || continue
+  while IFS= read -r -d '' _pf_dir; do
+    if [ -f "$_pf_dir/package.json" ] && grep -q '"name": *"promptfoo"' "$_pf_dir/package.json"; then
+      echo ">>> removing the Brain's bundled test tooling (not used on a server): $(printf '%q' "$_pf_dir") ($(sudo -n du -sh "$_pf_dir" 2>/dev/null | head -n 1 | cut -f1))"
+      sudo -n rm -rf -- "$_pf_dir"
+    fi
+  done < <(find -H "$_pf_root" -mindepth 3 -maxdepth 5 -type d -path '*/vendor/promptfoo' -not -path '*/node_modules*/*' -print0 2>/dev/null)
+done
+# <<< brain-tooling-prune
 
 # Re-touch the mutex marker after each staged step (v1.4.0 rule): the whole
 # install+build span can outrun the watchdog's 30-min TTL on a small VM.
@@ -908,7 +965,7 @@ gate_fail=""
 site_ok=""
 for i in $(seq 1 24); do
   body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
-  echo "$body" | grep -q '"status":"ok"' && { site_ok=1; break; }
+  grep -q '"status":"ok"' <<<"$body" && { site_ok=1; break; }
   sleep 5
 done
 [ -n "$site_ok" ] || gate_fail="site /api/health lacked \"status\":\"ok\" within 120s"
@@ -960,7 +1017,7 @@ if [ -n "$gate_fail" ]; then
   restored_ok=""
   for i in $(seq 1 12); do
     body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
-    echo "$body" | grep -q '"status":"ok"' && { restored_ok=1; break; }
+    grep -q '"status":"ok"' <<<"$body" && { restored_ok=1; break; }
     sleep 5
   done
   if [ -n "$restored_ok" ]; then
@@ -1195,6 +1252,31 @@ deploy_user="$(whoami)"
 # permanent silent no-op.
 sudo install -d -m 2775 -o root -g "$deploy_user" /var/lib/aiwebsite
 sudo install -d -m 2775 -o root -g "$deploy_user" /var/lib/aiwebsite/issue-spool.d
+
+# >>> next-advisory-ledger
+# ── Ledger: was this build retried past the Next.js security stop? (v1.176.2, v1.177.0) ──
+# deploy.sh passes NEXT_ADVISORY_IDS / NEXT_ADVISORY_VERSION when its build met
+# the framework's stop and was retried because every advisory is on the host's
+# checked list (§9.2). One never-emailed row, module/deploy/next-advisory, says
+# so for as long as it is true: recorded by every such deploy, resolved by the
+# first deploy whose build met no stop (the upgrade). Written straight to the
+# spool the watchdog drains; the source is "module" because the ledger's
+# sources are a closed list (§5.15). Best effort: a missing jq or an unwritable
+# spool never fails a deploy.
+next_adv_ids="${NEXT_ADVISORY_IDS:-}"
+next_adv_version="${NEXT_ADVISORY_VERSION:-}"
+if command -v jq >/dev/null 2>&1; then
+  if [ -n "$next_adv_ids" ]; then
+    jq -nc --arg ids "$next_adv_ids" --arg v "$next_adv_version" --arg ts "$(date -u +%FT%TZ)" \
+      '{action:"record",source:"module",key:"deploy/next-advisory",severity:"WARN",subject:("WARN deployed on next " + $v + ", which has known security advisories (the build was retried past the stop Next.js makes)"),detail:("Advisories the npm registry reports for next " + $v + ": " + $ids + ". Each is on the committed list deploy/next-advisories-checked.json of this host, which is why the deploy was allowed to retry the build once (owner ruling 2026-11-17). Next.js says: We strongly recommend you upgrade Next.js. This row resolves by itself at the first deploy whose build meets no stop."),emailed:false,seenAt:$ts}' \
+      >> /var/lib/aiwebsite/issue-spool.d/deploy.ndjson 2>/dev/null || true
+  else
+    jq -nc --arg ts "$(date -u +%FT%TZ)" \
+      '{action:"resolve",source:"module",key:"deploy/next-advisory",severity:"WARN",subject:"deploy built without meeting the Next.js security stop",detail:"",emailed:false,seenAt:$ts,resolvedBy:"auto:deploy-built-without-the-stop",note:"the build of this deploy met no security stop"}' \
+      >> /var/lib/aiwebsite/issue-spool.d/deploy.ndjson 2>/dev/null || true
+  fi
+fi
+# <<< next-advisory-ledger
 
 # Nightly knowledge crawl. ExecStartPre re-renders the JSON config snapshot so
 # the crawler always sees the currently deployed site.config.ts (§8).

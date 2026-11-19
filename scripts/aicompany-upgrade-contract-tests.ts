@@ -1,5 +1,5 @@
 // Host contract tests for the @aicompany/core climb v1.142.2 -> v1.169.0
-// (2026-10-23), kept current at each later pin (v1.176.1: 2026-11-15). Each case pins ONE assumption this host makes about a release
+// (2026-10-23), kept current at each later pin (v1.176.1: 2026-11-15; v1.179.0: 2026-11-19). Each case pins ONE assumption this host makes about a release
 // in that range, read off the REAL resolved site.config (and the real module
 // exports), so a later bump that moves one of them goes red here instead of on
 // the VM. Run: npm run test:aicompany (tsx, no DB, no network, no mail).
@@ -33,11 +33,11 @@ const read = (p: string) => readFileSync(p, "utf8");
 async function main() {
   // The expected version moves with every pin bump, in the pin commit. It
   // read 1.171.0 through the v1.172.0..v1.175.2 pins (red since the v1.172.0
-  // bump; corrected with the v1.176.1 pin, 2026-11-15).
-  await ok("pin: the module checkout is v1.176.1 and the lockfile's link entry agrees", () => {
+  // bump; corrected with the v1.176.1 pin, 2026-11-15); 1.179.0 from the pin of 2026-11-19.
+  await ok("pin: the module checkout is v1.179.0 and the lockfile's link entry agrees", () => {
     const mod = JSON.parse(read("packages/aicompany/package.json"));
     const lock = JSON.parse(read("package-lock.json"));
-    assert.equal(mod.version, "1.176.1");
+    assert.equal(mod.version, "1.179.0");
     assert.equal(lock.packages["packages/aicompany"].version, mod.version);
     // npm ci refuses a lock whose link entry disagrees with the linked
     // package.json (the v1.158.1 roleplay deploy failure): the recorded
@@ -55,6 +55,34 @@ async function main() {
       const [maj, min, pat] = v.split(".").map(Number);
       assert.ok(maj === 8 && (min > 3 || (min === 3 && pat >= 3)), `${k} is ${v}: the five vite advisories of MIGRATIONS v1.176.1 need 8.3.3 or later`);
     }
+  });
+
+  await ok("v1.177.0 J: the rendered pm2 drift check carries its own lint exemption; eslint.config.mjs no longer names it", () => {
+    assert.match(read("deploy/pm2-drift-check.cjs").split("\n").slice(0, 4).join("\n"), /eslint-disable @typescript-eslint\/no-require-imports/);
+    assert.doesNotMatch(read("eslint.config.mjs"), /pm2-drift-check/);
+  });
+
+  await ok("v1.177.0 A-D / v1.178.0: the rendered nginx config has the exact Twilio doors, the report inbox, the narration hand-off with its error map, and no /_next/static block", () => {
+    const nginx = read("deploy/nginx.conf");
+    assert.match(nginx, /location = \/brain\/twilio\/ws \{/);
+    assert.match(nginx, /location ~ \^\/brain\/twilio\/\(\?<twilio_door>/);
+    assert.match(nginx, /location = \/api\/csp-report \{/);
+    assert.match(nginx, /location \^~ \/_aicompany_media\/audio\/ \{/);
+    assert.match(nginx, /proxy_set_header X-Aicompany-Accel "media-v1";/);
+    assert.match(nginx, /^map \$status \$aicompany_media_error_cache \{/m);
+    assert.doesNotMatch(nginx, /location \/_next\/static/);
+  });
+
+  await ok("v1.177.0 step 2 (aiwebsite only): the /downloads/ drop-in repeats the four server-level security headers it would otherwise drop", () => {
+    const dropin = read("deploy/nginx.d/public-downloads.conf");
+    for (const h of [/add_header X-Frame-Options "SAMEORIGIN" always;/, /add_header X-Content-Type-Options "nosniff" always;/, /add_header Referrer-Policy "strict-origin-when-cross-origin" always;/, /add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;/]) {
+      assert.match(dropin, h);
+    }
+  });
+
+  await ok("v1.178.0 A: deploy.sh never ships the Brain's bundled vendor/promptfoo; setup-vm removes the copies earlier deploys left", () => {
+    assert.match(read("deploy/deploy.sh"), /--exclude vendor\/promptfoo/);
+    assert.match(read("deploy/setup-vm.sh"), /# >>> brain-tooling-prune/);
   });
 
   await ok("v1.158.1/v1.165.1: no second next/react nested under the module (one router context)", () => {

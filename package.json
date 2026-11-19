@@ -110,7 +110,7 @@
     "postgres": "^3.4.9",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "resend": "^6.38.1",
+    "resend": "^6.39.0",
     "sharp": "^0.35.5",
     "stripe": "^23.1.0",
     "zod": "^4.6.7"
@@ -126,7 +126,7 @@
     "tailwindcss": "^4.3.5",
     "tsx": "^4",
     "typescript": "^6.0.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "overrides": {
     "sharp": "^0.35.5",

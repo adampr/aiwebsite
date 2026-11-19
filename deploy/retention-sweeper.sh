@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: retention-sweeper.sh.tpl@5384b025ea4f471344b7046ef343d1bdaec7753157a475e2fe2765d4a9603d47
+# aicompany-template: retention-sweeper.sh.tpl@62a809788ea85330888d01560ecdffca1f0f2051025f1c200abdef3d8924202c
 # Enforces the data-retention windows stated on the privacy page (§9.5). The
 # windows are rendered from site-deploy.env RETAIN_* values, which must match
 # privacy.retentionDays in site.config.ts — if you change one, change the
@@ -37,6 +37,17 @@ if [ "$(sudo -u postgres psql -d "aiwebsite" -tAc "SELECT to_regclass('public.co
 fi
 if [ "$(sudo -u postgres psql -d "aiwebsite" -tAc "SELECT to_regclass('public.agent_hits') IS NOT NULL;")" = "t" ]; then
   run "DELETE FROM agent_hits WHERE created_at < now() - interval '180 days';"
+fi
+
+# csp_reports (v1.177.0, §5.18 browser security reports) exists only on hosts
+# that adopted the report inbox — same to_regclass probe, for the same reason.
+# Rows are aggregates keyed by their UTC day. The 90 is
+# CSP_REPORT_RETENTION_DAYS (src/security/csp-constants.ts), the number the
+# privacy page prints; tests/csp-retention.test.ts pins the two together. It is
+# deliberately not a RETAIN_* key: an unknown site-deploy.env key is fatal to
+# an older render.mjs, so a key here would turn every rollback into a hand edit.
+if [ "$(sudo -u postgres psql -d "aiwebsite" -tAc "SELECT to_regclass('public.csp_reports') IS NOT NULL;")" = "t" ]; then
+  run "DELETE FROM csp_reports WHERE day < (now() AT TIME ZONE 'UTC')::date - 90;"
 fi
 
 echo "[retention] sweep completed $(date -Is)"

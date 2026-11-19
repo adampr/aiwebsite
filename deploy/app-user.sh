@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: app-user.sh.tpl@b3d0edf8d47ac5d10479eff510d2b3cb868b10782b128a0388510d8fcaf95318
+# aicompany-template: app-user.sh.tpl@e6c363f6d99d656a1e77f74e69258d16630cbd123013892ba9418736d412b806
 # aiwebsite app account handoff (v1.175.0, architecture.md §9.10; S12 P1, owner
 # ruling 2026-10-25 "Go, both sites"). Moves the site, brain-api, skills-host and
 # the extra services off the deploy user (passwordless sudo) onto their own
@@ -234,7 +234,7 @@ host_units() {   # deploy/app-user-units.txt: one aiwebsite-*.service per line, 
   while IFS= read -r u || [ -n "$u" ]; do
     u="${u%$'\r'}"; u="${u%%#*}"; u="$(printf '%s' "$u" | tr -d '[:space:]')"
     [ -n "$u" ] || continue
-    if ! printf '%s' "$u" | grep -qE "^aiwebsite-[a-z0-9][a-z0-9.@_-]*\.service$"; then
+    if ! grep -qE "^aiwebsite-[a-z0-9][a-z0-9.@_-]*\.service$" <<<"$u"; then
       echo "app-user: ignoring '$u' in deploy/app-user-units.txt (must be aiwebsite-<name>.service)" >&2
       continue
     fi

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# aicompany-template: posture-check.sh.tpl@5341b61600782ef82bf4a93fc3a6ea1a94ce39404fb8fbc5996ab54abedd53db
+# aicompany-template: posture-check.sh.tpl@836f625d2635eea78b2f13c8b7cb51e354fad685b159d34c553093e4a46c5d6a
 # aiwebsite posture check (v1.174.0, architecture.md §9.1 / §9.5). READ-ONLY: it
 # changes nothing on the box and prints no secret.
 #
-# Two assertions; each broken one is a FAIL line:
+# Four assertions; each broken one is a FAIL line:
 #   1. listeners — every TCP listener on the module's internal ports (site
 #      3000, brain-api 3211, skills-host 3213) is bound to loopback (127.0.0.0/8
 #      or ::1). Their only clients are local: nginx (proxy_pass
@@ -26,6 +26,12 @@
 #      (live and dump) and no unacknowledged repaired drift; no pm2 module,
 #      crontab, ~/.ssh or ~/.npmrc under the app account. --user defaults to the
 #      app account then.
+#   4. media (v1.177.0, §19.33.5) — /var/lib/aiwebsite/media/audio, the
+#      directory nginx serves narration files from, is a plain directory
+#      owned by <user> with mode 755, and nothing in it but regular,
+#      world-readable files. setup-vm creates it so on every deploy. While it
+#      is wrong the site serves narration from Postgres instead, which on
+#      next >= 16.4.5 means audio that does not seek on iPhone.
 # INFO lines are never a failure: a port nothing listens on (the health checks
 # own a down service), other non-loopback TCP listeners besides sshd, and
 # whether the pm2 daemon runs inside the unit (that matters for shutdown order
@@ -280,6 +286,24 @@ if app_user_active; then
   fi
 fi
 # <<< app-user-posture
+
+# ── 4. media (v1.177.0, §19.33.5) ─────────────────────────────────
+md="/var/lib/aiwebsite/media/audio"
+if [ ! -e "$md" ]; then
+  fail "media $md is missing — setup-vm creates it on every deploy; until then narration audio is served from Postgres (no Content-Length on next >= 16.4.5)"
+elif [ -L "$md" ] || [ ! -d "$md" ]; then
+  fail "media $md is not a plain directory"
+else
+  mo="$(stat -c '%U %a' "$md" 2>/dev/null || true)"
+  if [ "$mo" = "$user 755" ]; then
+    ok "media $md is $user 755"
+  else
+    fail "media $md is ${mo:-unreadable}, expected $user 755 (the pm2 user writes it, nginx reads it)"
+  fi
+  # -print -quit: the first offender, with no pipe whose status could mislead.
+  bad="$(find "$md" -mindepth 1 -maxdepth 1 ! -name '.*' \( ! -type f -o ! -perm -0004 \) -print -quit 2>/dev/null || true)"
+  if [ -n "$bad" ]; then fail "media $bad is not a regular world-readable file (nginx would refuse it)"; fi
+fi
 
 if [ "$fails" -gt 0 ]; then
   echo "posture-check: $fails FAIL line(s)"
