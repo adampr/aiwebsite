@@ -9,7 +9,8 @@
 
 import { summaryGuard } from "./lib/summary-guard";
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import { siteConfig } from "../site.config";
 import { brainCallLadder, deriveBrainCallCeiling, isArticleDue } from "@aicompany/core/blog/generate";
@@ -83,6 +84,29 @@ async function main() {
   await ok("v1.178.0 A: deploy.sh never ships the Brain's bundled vendor/promptfoo; setup-vm removes the copies earlier deploys left", () => {
     assert.match(read("deploy/deploy.sh"), /--exclude vendor\/promptfoo/);
     assert.match(read("deploy/setup-vm.sh"), /# >>> brain-tooling-prune/);
+  });
+
+  await ok("tripwire (2026-11-19, next 16.4.6): next 16.4.5+ with the audio route mounted requires the module >= 1.177.0 (it hands narration to nginx); the route is found by its import", () => {
+    // next 16.4.5+ drops a route handler's Content-Length (GHSA-pc58 fix); narration is safe only while the module
+    // sends the file through nginx (v1.177.0+). A rollback of the module below 1.177.0 while next stays 16.4.5+ would
+    // bring back length-less narration (roleplay, 2026-11-13): roll next back first.
+    const routes: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/^route\.(ts|tsx|js|jsx|mjs)$/.test(e.name) && read(full).includes("@aicompany/core/blog/audio-route")) routes.push(full);
+      }
+    };
+    walk("src/app");
+    if (blog.audio?.enabled) assert.ok(routes.length > 0, "no route file imports @aicompany/core/blog/audio-route while blog.audio is on");
+    const num = (v: string) => v.split(/[.-]/).slice(0, 3).map(Number);
+    const atLeast = (v: string, f: number[]) => { const p = num(v); for (let i = 0; i < 3; i++) if (p[i] !== f[i]) return p[i] > f[i]; return true; };
+    const nextV = JSON.parse(read("node_modules/next/package.json")).version as string;
+    const modV = JSON.parse(read("packages/aicompany/package.json")).version as string;
+    if (atLeast(nextV, [16, 4, 5]) && routes.length > 0) {
+      assert.ok(atLeast(modV, [1, 177, 0]), `next ${nextV} drops route-handler Content-Length and @aicompany/core ${modV} does not hand narration to nginx`);
+    }
   });
 
   await ok("v1.158.1/v1.165.1: no second next/react nested under the module (one router context)", () => {
