@@ -34,11 +34,11 @@ const read = (p: string) => readFileSync(p, "utf8");
 async function main() {
   // The expected version moves with every pin bump, in the pin commit. It
   // read 1.171.0 through the v1.172.0..v1.175.2 pins (red since the v1.172.0
-  // bump; corrected with the v1.176.1 pin, 2026-11-15); 1.179.0 from the pin of 2026-11-19.
-  await ok("pin: the module checkout is v1.179.0 and the lockfile's link entry agrees", () => {
+  // bump; corrected with the v1.176.1 pin, 2026-11-15); 1.179.0 from the pin of 2026-11-19, 1.179.1 from the pin of the same afternoon.
+  await ok("pin: the module checkout is v1.179.1 and the lockfile's link entry agrees", () => {
     const mod = JSON.parse(read("packages/aicompany/package.json"));
     const lock = JSON.parse(read("package-lock.json"));
-    assert.equal(mod.version, "1.179.0");
+    assert.equal(mod.version, "1.179.1");
     assert.equal(lock.packages["packages/aicompany"].version, mod.version);
     // npm ci refuses a lock whose link entry disagrees with the linked
     // package.json (the v1.158.1 roleplay deploy failure): the recorded

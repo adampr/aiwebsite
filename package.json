@@ -91,6 +91,7 @@
     "test:anthropicsdk": "tsx scripts/anthropic-sdk-contract-tests.ts",
     "test:aicompany": "tsx scripts/aicompany-upgrade-contract-tests.ts",
     "test:zod": "tsx scripts/zod-contract-tests.ts",
+    "test:nextwire": "tsx scripts/next-response-path-tests.ts",
     "test:audiofallback": "vitest run"
   },
   "dependencies": {
