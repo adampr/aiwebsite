@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-11-16 §5.10 WORKSHOP PAYMENT ALERTS, THE STRIPE TWIN (owner decision 2026-11-16: a private workshop sold through a Stripe Payment Link must email the admin when it is paid). NEW `src/lib/workshop/stripe-watch.ts` (the 5-minute poller, started from `instrumentation.ts` right after the Ticket Tailor one, same gate ladder and the same `WORKSHOP_ORDER_ALERTS_ENABLED` / `WORKSHOP_ORDER_ALERTS_FORCE` switches, key gate `STRIPE_SECRET_KEY`) and `src/lib/workshop/stripe-alert.ts` (the pure half: which Checkout Sessions are workshop registrations, the alerted-id state, the email text). A session counts when it is `complete` and its `metadata.offering` starts with `workshop`; state is the governance_meta key `workshop_stripe_alerted` (an id map, not a time cursor). A private workshop is an ops-side Stripe Payment Link and is never listed on the site or on Ticket Tailor: no page, route, schema or migration changes, and no new environment variable. Tests: `npm run test:workshopstripe` (new) and a list arm in `npm run test:stripesdk`. Full detail in the §5.10 "Workshop payment alerts" paragraph.
+
 Last verified against code: 2026-11-15 BRAIN PIN v1.192 (`55a94f46440e`) -> **v1.193** (`adcbede839b7`, build `06620f22f9c4`), A DATA RELEASE (xldev #992): the committed model list now carries the provider-announced model shutdown dates (#985); no code change, no migration, no new environment value; the Brain lockfile moved only in its ten version fields. What this host will and will not serve differently, as far as the repo shows (including the template's former `OPENAI_MODEL=gpt-5-mini` line, now unset): the entry "### Brain v1.193 adcbede839b7".
 
 Last verified against code: 2026-11-15 ARTICLE-AUDIO BACKUP VOICE -> DEEPGRAM (`site.config.ts` `blog.audioFallbackGenerator`; module v1.176.0 MIGRATIONS "Host adoption" steps 3-4; owner decision 2026-11-12, Adam Radulovic, verbatim: "Test and switch now", then "Deepgram, you pick"). OpenAI shuts down `gpt-4o-mini-tts`, the model of this host's old fallback (OpenAI seam, voice ballad), on 2027-01-06. The fallback is now `createDeepgramTtsSynthesizer({ apiKey: process.env.DEEPGRAM_API_KEY, voice: "aura-2-orpheus-en" })` (Deepgram Aura-2; the voice IS the model id; orpheus is this host's pick in MIGRATIONS v1.176.0 step 3, 74.9% against the module's 60% speech-band gate on 2026-11-12). The PRIMARY is unchanged (Gemini, Charon, gemini-3.8-flash-tts). **What a listener hears, and when:** nothing changes for any article whose narration is already stored, and nothing changes while the primary voice works. Only when the primary refuses a chunk while NEW audio is being made (a nightly publish, an adopted refresh, a backfill) does the module re-render that whole article in the backup voice, which is now Deepgram's orpheus instead of OpenAI's ballad; stored OpenAI-voiced files keep playing and are not re-made by this change (MIGRATIONS v1.176.0 "The render hash": a fallback-rendered row whose seam is no longer wired re-renders on the PRIMARY only when it is next visited). **Key:** `DEEPGRAM_API_KEY`, the same name the Brain already reads for speech-to-text (`.env.example`); the VM `.env` must carry it (module host step 5). Without it the seam declines (one `[audio] no Deepgram API key configured` warn per generator instance, no request), the article publishes silent and the run warns (`refusal-fallback-declined`). The key reaches Deepgram only in the `Authorization: Token` header; it is in no report line, log line or error text. **Test:** `npm run test:audiofallback` (vitest, root devDependency since this round, `vitest.config.ts` runs this one file; hermetic: fetch stubbed before `site.config.ts` is imported, a dummy key, the module's `queries`/`audio-dsp` peers mocked as the module's own `tests/blog-audio-deepgram.test.ts` does): the configured fallback is the Deepgram seam with orpheus and the primary is unchanged; the source names the factory, the voice and `process.env.DEEPGRAM_API_KEY`; a primary refusal through the module's real `runAudioHook` sends every chunk to `https://api.deepgram.com/v1/speak?model=aura-2-orpheus-en` and stores one file labelled `aura-2-orpheus-en`; with no key nothing is sent and the run warns; a Deepgram 401 is class `auth`, and the key appears in no line, log or error. Since the R2a fix round (2026-11-15) one more arm runs BOTH generators exactly as `site.config.ts` exports them, with one stubbed fetch routed by URL: the configured Gemini primary refuses the spoken TL;DR chunk with its 400 and renders the rest, and the article must still fail over to Deepgram orpheus (a host-side wrapper that swallowed the configured primary's refusals turns it red); neither dummy key reaches a line or log. The paid voice check (`tsx packages/aicompany/cli/check-tts-voice.ts --vendor deepgram --voices aura-2-orpheus-en`, three runs) is run by the coordinator with the host's key, not in this repo's gate.
@@ -3084,6 +3086,48 @@ type(s), total (`total/100` + currency code), order id/status/placed-at. The
 stamp advances **only after a successful send** — a failed send retries the whole
 batch next tick (at-least-once; duplicate alert acceptable, lost registration
 alert not — the deliberate inverse of the storage report's claim-before-send).
+
+**Workshop payment alerts, the Stripe twin (`src/lib/workshop/stripe-watch.ts` +
+`stripe-alert.ts`, 2026-11-16)**: owner decision: a workshop paid on Stripe must
+reach the admin's inbox the same way a Ticket Tailor registration does. The case
+is the **private workshop**: one company, never listed on /builders or on the
+Ticket Tailor box office, sold through a **Stripe Payment Link** created ops-side
+(Product + one-time Price + Payment Link with `metadata.offering=workshop-private`;
+Stripe copies a link's metadata onto every Checkout Session it creates). The site
+renders nothing for it and has no Stripe webhook, so this is a second in-process
+**5-minute poller**, started from `instrumentation.ts register()` right after the
+Ticket Tailor one with the identical ladder: globalThis singleton, NEXT_PHASE
+build guard, the SAME `WORKSHOP_ORDER_ALERTS_ENABLED=0` kill switch (it now stops
+both emails), `STRIPE_SECRET_KEY`-presence gate, supervised-checkout gate with the
+same `WORKSHOP_ORDER_ALERTS_FORCE=1` override, `[workshop-stripe]` log prefix.
+Each tick calls `checkout.sessions.list({ status: "complete", created: { gte:
+now - 15 days }, limit: 100, expand: ["data.line_items"] })` through the SDK's
+auto-pagination (1,000-session valve; SDK timeout 15 s, one network retry) and
+keeps the sessions whose `metadata.offering` **starts with `workshop`**; the
+cohort subscription (`cohort`) and the other products on the same Stripe account
+never match. State is the governance_meta key `workshop_stripe_alerted`, a JSON
+map `{ <session id>: { c: <created>, p: <payment_status> } }`, and deliberately
+**not a time cursor**: a session's only timestamp is `created` (when the buyer
+opened the link), and a session opened earlier can complete later than one opened
+after it, so a newest-created cursor would skip the slow buyer. The map is pruned
+to the look-back window each tick. There is **no first-run initialization**: the
+first tick alerts whatever workshop payment the window already holds. New
+sessions are batched into ONE email to `adminRecipient()` via
+`sendGovernanceEmail` listing per session: workshop (the line-item description),
+buyer name and email, seats (the summed line-item quantity), total
+(`amount_total/100` + currency), payment state, session id and the time it was
+opened in **Central time**, with the documented Dashboard payments page as the
+footer link. A session that completes while its payment is still pending
+(`payment_status: "unpaid"`, a bank debit) is alerted as pending and alerted
+**once more** when a later tick sees it `paid`; fifteen days is the window
+because Stripe documents 2 to 14 days for a bank debit to confirm. The map is
+written **only after a successful send** (at-least-once, as above).
+`scripts/workshop-stripe-alert-tests.ts` (`npm run test:workshopstripe`) pins the
+match rule, the once-only and slow-buyer cases, the pending-then-cleared
+follow-up, pruning, the tolerant state read and the email text;
+`npm run test:stripesdk` runs the real list call against its stand-in server
+(query shape, auto-pagination, the fields read). Closing a private session after
+it sells is ops-side too: set the Payment Link inactive.
 
 **Workshop notification list** (added 2026-08-18, the sold-out round; window-aware
 copy since 2026-08-26, above):
@@ -17734,10 +17778,10 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
 | | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c`. `MICROSOFT_TENANT_ID` stays `common`: a GUID here would make the module's binding trust that directory for EVERY address it reports (§5.4), which is wider than the domain-scoped `site.config.ts` map |
 | | `MICROSOFT_TRUSTED_TENANTS` | **optional, UNSET here** (module v1.137, §5.4). `"domain=tid;domain=tid,tid"`, merged with `auth.oauthBinding.trustedMicrosoftTenants` in site.config.ts, which already carries the xl.net entry. It exists for a directory that must not be committed to a public repo. Tolerant: a typo drops that entry (those people get one confirmation mail) instead of taking the site down |
-| Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
+| Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error. Also read by the 5-min workshop payment-alert poller (`workshop/stripe-watch.ts`, §5.10); unset ⇒ that poller logs why and skips |
 | | `STRIPE_PRICE_COHORT` | optional dashboard-managed Price ID override; unset ⇒ inline `price_data` ($495/mo recurring) |
 | Ticket Tailor | `TICKETTAILOR_API_KEY` | box-office API key (`api.tickettailor.com/v1`, §5.10): used ops-side to manage workshop events AND read by the site's 5-min registration-alert poller (`workshop/orders-watch.ts`); unset ⇒ the poller logs why and skips |
-| | `WORKSHOP_ORDER_ALERTS_ENABLED` / `WORKSHOP_ORDER_ALERTS_FORCE` | kill switch for only the registration alert email (unset = enabled) / `1` lets the poller run on a dev or unsupervised checkout for testing (§5.10) |
+| | `WORKSHOP_ORDER_ALERTS_ENABLED` / `WORKSHOP_ORDER_ALERTS_FORCE` | kill switch for only the registration alert emails, both pollers: Ticket Tailor orders and Stripe workshop payments (unset = enabled) / `1` lets both pollers run on a dev or unsupervised checkout for testing (§5.10) |
 | Governance | `GOVERNANCE_ENABLED` | kill switch (§5.12): `0` = mutations 503, reads/downloads stay up, the timer keeps sweeping. Unset = enabled |
 | | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~7 Tavily calls per fresh domain incl. standard probes; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the email approval loop, clamped to BUDGET_CEILINGS (§5.12) |
 | | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 6000) | MTD Tavily WARN threshold in the governance timer's report |

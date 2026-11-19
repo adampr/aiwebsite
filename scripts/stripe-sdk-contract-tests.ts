@@ -8,6 +8,7 @@
  * sites rely on:
  *   src/app/api/checkout/route.ts   new Stripe(key) ; checkout.sessions.create({...}) -> session.url
  *   src/app/builders/thanks/page.tsx checkout.sessions.retrieve(id) -> status, metadata.offering, customer_details.email
+ *   src/lib/workshop/stripe-alert.ts fetchCompleteSessions(): checkout.sessions.list({status, created.gte, limit, expand}) auto-paginated -> id, created, payment_status, amount_total, metadata, customer_details, line_items.data (2026-11-16)
  * Neither site pins `apiVersion`, so every request carries the SDK's own pinned
  * version: this prints it and asserts the header equals Stripe.API_VERSION.
  * The create params below are the route's, built from the same OFFERINGS
@@ -23,6 +24,7 @@ import type { AddressInfo } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import Stripe from "stripe";
 import { OFFERINGS } from "../src/lib/stripe/offerings";
+import { fetchCompleteSessions } from "../src/lib/workshop/stripe-alert";
 
 let failures = 0;
 function check(label: string, actual: unknown, expected: unknown) {
@@ -56,6 +58,20 @@ async function main() {
           id: "cs_test_1", object: "checkout.session", status: "complete",
           metadata: { offering: "cohort" }, customer_details: { email: "buyer@example.test" },
         }));
+        return;
+      }
+      if (req.method === "GET" && req.url?.startsWith("/v1/checkout/sessions?")) {
+        // Two pages, so the SDK's auto-pagination (starting_after) is exercised.
+        const q = new URL(req.url, "http://x").searchParams;
+        const row = (id: string, offering: string) => ({
+          id, object: "checkout.session", created: 1796139000, status: "complete", payment_status: "paid",
+          amount_total: 597000, currency: "usd", metadata: { offering },
+          customer_details: { name: "Pat Buyer", email: "buyer@example.test" },
+          line_items: { object: "list", data: [{ id: `li_${id}`, object: "item", description: "Private workshop", quantity: 6 }], has_more: false },
+        });
+        res.end(JSON.stringify(q.get("starting_after")
+          ? { object: "list", url: "/v1/checkout/sessions", has_more: false, data: [row("cs_list_2", "cohort")] }
+          : { object: "list", url: "/v1/checkout/sessions", has_more: true, data: [row("cs_list_1", "workshop-private")] }));
         return;
       }
       res.statusCode = 404;
@@ -136,6 +152,25 @@ async function main() {
   let threw = false;
   try { await stripe.checkout.sessions.retrieve("cs_missing"); } catch (e) { threw = e instanceof Stripe.errors.StripeError; }
   check("unknown session throws a Stripe.errors.StripeError", threw, true);
+
+  // ── list (workshop payment alert poller): the real fetchCompleteSessions ──
+  seen.length = 0;
+  const listed = await fetchCompleteSessions(stripe, 1795000000);
+  const q1 = new URL(seen[0].path, "http://x").searchParams;
+  check("list: GET /v1/checkout/sessions", [seen[0].method, seen[0].path.split("?")[0]], ["GET", "/v1/checkout/sessions"]);
+  check("list: query the poller relies on", {
+    status: q1.get("status"), gte: q1.get("created[gte]"), limit: q1.get("limit"), expand: q1.get("expand[0]"),
+  }, { status: "complete", gte: "1795000000", limit: "100", expand: "data.line_items" });
+  check("list: auto-pagination asks for the page after the last id", [seen.length, new URL(seen[1].path, "http://x").searchParams.get("starting_after")], [2, "cs_list_1"]);
+  check("list: both pages returned, in order", listed.map((s) => s.id), ["cs_list_1", "cs_list_2"]);
+  check("list: fields the alert reads", {
+    created: listed[0].created, status: listed[0].status, paid: listed[0].payment_status, total: listed[0].amount_total,
+    currency: listed[0].currency, offering: listed[0].metadata?.offering, buyer: listed[0].customer_details?.email,
+    item: listed[0].line_items?.data?.[0]?.description, qty: listed[0].line_items?.data?.[0]?.quantity,
+  }, {
+    created: 1796139000, status: "complete", paid: "paid", total: 597000, currency: "usd",
+    offering: "workshop-private", buyer: "buyer@example.test", item: "Private workshop", qty: 6,
+  });
 
   await new Promise<void>((r) => server.close(() => r()));
   guard.reached();

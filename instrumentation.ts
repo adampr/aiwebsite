@@ -31,4 +31,11 @@ export async function register(): Promise<void> {
     "@/lib/workshop/orders-watch"
   );
   startWorkshopOrderAlerts();
+  // §5.10 workshop payment alerts, the Stripe twin: a private workshop is
+  // sold through a Stripe Payment Link, which the Ticket Tailor poller
+  // cannot see. Same 5-minute beat, same gates and kill switch.
+  const { startWorkshopStripeAlerts } = await import(
+    "@/lib/workshop/stripe-watch"
+  );
+  startWorkshopStripeAlerts();
 }

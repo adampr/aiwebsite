@@ -22,6 +22,7 @@
     "test:work": "tsx scripts/work-tests.ts",
     "test:roadmap": "tsx scripts/roadmap-tests.ts",
     "test:workshop": "tsx scripts/workshop-session-tests.ts",
+    "test:workshopstripe": "tsx scripts/workshop-stripe-alert-tests.ts",
     "test:workupdate": "tsx scripts/work-update-flow-tests.ts",
     "test:correlate": "tsx scripts/work-archive-correlate-tests.ts",
     "test:worksubmit": "tsx scripts/work-submit-tests.ts",
