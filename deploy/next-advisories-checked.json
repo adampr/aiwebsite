@@ -1,0 +1,19 @@
+{
+  "package": "next",
+  "checked": [
+    {
+      "id": "GHSA-mfr8-8qww-v76h",
+      "checkedOn": "2026-11-19",
+      "by": "the sites release session (xldev-45) for Adam Radulovic (adam@xl.net)",
+      "reason": "The advisory is an information disclosure across root params when a 'use cache' function is called through unstable_cache(). This site has no 'use cache' directive and no unstable_cache call, and neither has the @aicompany/core module it mounts, so the affected code path is never reached.",
+      "how": "Searched every .ts, .tsx, .js, .jsx, .mjs and .cjs file of this repository's src/ and scripts/ and the root instrumentation.ts and next.config.ts, and src/ of packages/aicompany at the v1.179.0 tag, for a 'use cache' directive and for unstable_cache: zero matches in either. next.config.ts sets neither cacheComponents nor useCache."
+    },
+    {
+      "id": "GHSA-vc7v-qv4w-wrv8",
+      "checkedOn": "2026-11-19",
+      "by": "the sites release session (xldev-45) for Adam Radulovic (adam@xl.net)",
+      "reason": "The advisory is a cache leak across root param values in nested 'use cache' functions. This site has no 'use cache' directive at all, and neither has the @aicompany/core module it mounts, so there is no cached function for the leak to occur in.",
+      "how": "Searched every .ts, .tsx, .js, .jsx, .mjs and .cjs file of this repository's src/ and scripts/ and the root instrumentation.ts and next.config.ts, and src/ of packages/aicompany at the v1.179.0 tag, for a 'use cache' directive and for unstable_cache: zero matches in either. next.config.ts sets neither cacheComponents nor useCache."
+    }
+  ]
+}
